@@ -9,10 +9,12 @@ you exactly what instead of failing later in a random handler.
 
 from __future__ import annotations
 
+import io
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 # Load secret keys BEFORE reading the values below.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -22,8 +24,41 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # dotenv mavjud kalitlarni BOSIB YOZMAYDI, shuning uchun BIRINCHI o'qilgan
 # fayl g'alaba qiladi.  env.txt birinchi turadi — yaqinda to'ldirilgan
 # qiymatlar eskirgan .env qiymatlarini teskari bosib olmaydi.
-load_dotenv(BASE_DIR / "env.txt")
-load_dotenv(BASE_DIR / ".env")
+#
+# encoding="utf-8-sig" — Windows Notepad bilan saqlangan fayldagi YASHIRIN
+# BOM belgisini yutadi.  Bomsiz fayl bo'lsa ham zarari yo'q; BOM bilan
+# esa aks holda BIRINCHI satrdagi kalit (masalan BOT_TOKEN) o'qilmaydi!
+load_dotenv(BASE_DIR / "env.txt", encoding="utf-8-sig")
+load_dotenv(BASE_DIR / ".env", encoding="utf-8-sig")
+
+
+def _load_utf16_fallback(path: Path) -> None:
+    """Windows Notepad 'Unicode' rejimi faylni UTF-16 qilib saqlaydi.
+
+    Bunday faylni utf-8-sig ham o'qiy olmaydi (kalitlar 0 ta bo'ladi).
+    Fayl boshi FF FE / FE FF bilan boshlansa — UTF-16 deb qayta o'qiydi.
+    """
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return
+    if raw[:2] not in (b"\xff\xfe", b"\xfe\xff"):
+        return
+    try:
+        text = raw.decode("utf-16")
+        load_dotenv(io.StringIO(text), override=False)
+    except (UnicodeDecodeError, ValueError):
+        pass
+
+
+_load_utf16_fallback(BASE_DIR / "env.txt")
+_load_utf16_fallback(BASE_DIR / ".env")
+# Ixtiyoriy: ENV_FILE=/yol/kalitlar.txt — platforma (Docker/hosting)
+# maxfiy kalitlarni boshqa joyga qo'ysa, shu o'zgaruvchi orqali ko'rsatiladi.
+# Ustuvorligi ENG BALAND (override=True) — ataylab ko'rsatilgan fayl g'alaba qiladi.
+_env_file_override = os.getenv("ENV_FILE", "").strip()
+if _env_file_override:
+    load_dotenv(_env_file_override, encoding="utf-8-sig", override=True)
 
 
 def _env(key: str, default: str = "") -> str:
@@ -119,10 +154,38 @@ settings = Settings()
 
 
 def ensure_configured() -> None:
-    """Raise a clear error when required .env values are missing."""
-    if not settings.is_configured:
-        missing = ", ".join(settings.missing_keys())
-        raise RuntimeError(
-            f"Missing required settings: {missing}. "
-            "Copy .env.example to .env and fill them in."
-        )
+    """Raise a clear, self-diagnosing error when required keys are missing."""
+    if settings.is_configured:
+        return
+    missing = ", ".join(settings.missing_keys())
+
+    # Tashxis: qaysi kalit-fayllar qaraldi, topildimi, nechta qator o'qildi?
+    lines = [f"Missing required settings: {missing}.", "", "Bot kalitlarni shu joylardan qidiradi:"]
+    for name in ("env.txt", ".env"):
+        path = BASE_DIR / name
+        if path.exists():
+            try:
+                n = len(dotenv_values(path, encoding="utf-8-sig"))
+            except (UnicodeDecodeError, ValueError):
+                n = 0
+            if n:
+                lines.append(f"  • {name}: TOPILDI, {n} ta kalit o'qildi — lekin BOT_TOKEN/ADMIN_ID topilmadi (ism yoki format xato)")
+            else:
+                lines.append(f"  • {name}: TOPILDI, lekin 0 ta kalit o'qildi (format yoki kodirovka xato — UTF-16?)")
+        else:
+            lines.append(f"  • {name}: YO'Q (bu fayl topilmadi)")
+    lines.append("  • ENV_FILE muhit o'zgaruvchisi (ko'rsatilmagan)" if not _env_file_override else f"  • ENV_FILE={_env_file_override}")
+    lines.append("  • To'g'ridan-to'g'ri muhit o'zgaruvchalari (BOT_TOKEN, ADMIN_ID)")
+    lines += [
+        "",
+        "Fayl formati — har satrda BITTA kalit, '=' belgisi bilan:",
+        "  BOT_TOKEN=123456:ABC-DEF...",
+        "  ADMIN_ID=123456789",
+        "  SUPABASE_DB_URL=postgresql://...",
+        "",
+        "ETIHBOR: agar fayl TOPILDI lekin 0 ta kalit o'qilgan bo'lsa —",
+        "format xato (masalan 'ADMIN_ID: 123' yoki 'ADMIN ID=123').",
+        "env.txt fayli kod bilan BIRGA deploy qilingan bo'lishi shart",
+        "(konteyner ichida /app/env.txt bo'lishi kerak).",
+    ]
+    raise RuntimeError("\n".join(lines))
