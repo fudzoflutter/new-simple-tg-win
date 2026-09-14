@@ -1,0 +1,537 @@
+"""
+Hisobot xizmati (4-band — yangilangan talab).
+
+Telegram business-update'larini ulanish egasining O'Z botiga yuboriladigan
+xabarga aylantiradi.  Qoidalar QAT'IY:
+
+* yuborilgan xabarlar FORVARD QILINMAYDI — tarkib jim KESHlanadi (DBda);
+* matn xabari           -> faqat TAHRIRLANGANDA yoki O'CHIRILGANDA xabar;
+* rasm/video/GIF/stiker -> faqat O'CHIRILGANDA xabar (keshlangan fayl
+  qayta yuboriladi);
+* hisobot faqat SUHBATDOSH hodisalari uchun: eganing o'z yuborgan/
+  tahrirlagan/o'chirgan xabarlari hech qachon hisobot qilib berilmaydi.
+
+Tahrirlash hisoboti namunadagi ko'rinishda:
+
+    ✏️ Message edited
+
+    👤 Who: @username
+    📱 Default: eski matn
+    📲 Edited: yangi matn
+    💬 Chat: Alijon
+    🕒 Time: 23:08:54
+
+Har bir xabar DBda BITTA yozuv bilan saqlanadi: tahrirlashda yozuv JOYIDA
+yangilanadi (update_event_details) — shu sababli keyingi o'chirish hisoboti
+doim ENG OXIRGI tarkibni beradi.
+
+Shaxsiylik: hisobotlar faqat ulanish EGASIGA boradi (admin emas!).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from datetime import datetime
+from typing import Optional
+
+from aiogram import Bot
+from aiogram.exceptions import TelegramRetryAfter
+from aiogram.types import (
+    BusinessMessagesDeleted,
+    Chat,
+    Message,
+    User as TgUser,
+)
+
+from app.database import db
+from app.utils.formatting import esc, fmt_time, mention_by_id
+from app.utils.texts import (
+    NO_TEXT,
+    REPORT_DELETED_MEDIA,
+    REPORT_DELETED_MEDIA_CAPTION,
+    REPORT_DELETED_TEXT,
+    REPORT_EDIT,
+    REPORT_FOOTER,
+    TRUNCATED,
+    UNKNOWN_CHAT,
+    WHO_UNKNOWN,
+)
+
+logger = logging.getLogger(__name__)
+
+# Hisobot xabarida ko'rsatiladigan matn chegarasi (DBda TO'LIQ saqlanadi).
+MAX_TEXT = 350
+MAX_TITLE = 64
+MAX_BULK_DELETES = 10  # bir vaqtda o'chirilgan xabarlar ustidagi cheklov
+
+# ---------------------------------------------------------------------------
+# Hodisa turlari (DB qiymatlari)
+# ---------------------------------------------------------------------------
+EVENT_EDIT = "edit"
+EVENT_DELETE = "delete"
+EVENT_DELETE_MEDIA = "delete_media"
+EVENT_STICKER = "sticker"
+EVENT_PHOTO = "photo"
+EVENT_VIDEO = "video"
+EVENT_ANIMATION = "animation"  # GIF
+EVENT_TEXT = "text"
+
+KIND_LABELS = {
+    EVENT_STICKER: "Sticker",
+    EVENT_PHOTO: "Photo",
+    EVENT_VIDEO: "Video",
+    EVENT_ANIMATION: "GIF",
+    EVENT_TEXT: "Message",
+}
+
+MEDIA_EVENTS = frozenset(
+    {EVENT_STICKER, EVENT_PHOTO, EVENT_VIDEO, EVENT_ANIMATION}
+)
+
+
+class Reporter:
+    """Faoliyat hisobotlarini ULANISH EGASIGA yetkazadi (qoidalar yuqorida)."""
+
+    def __init__(self, bot: Bot) -> None:
+        self.bot = bot
+        self._owner_id: Optional[int] = None
+        self._owner_chat: Optional[int] = None
+
+    # ------------------------------------------------------------------ API
+
+    async def report_incoming(self, message: Message) -> None:
+        """business_message — hisobot YO'Q, tarkib faqat KESHlanadi.
+
+        Talab: har bir yuborilgan xabar (matn, stiker, rasm, video, GIF)
+        jim saqlanadi — keyin o'chirilsa, aynan nima o'chirilgani
+        ko'rsatilishi uchun.
+        """
+        if await self._activate(message.business_connection_id) is None:
+            return
+
+        if message.sticker:
+            await self._store(
+                message, EVENT_STICKER,
+                self._media_details(message.sticker.file_id, EVENT_STICKER),
+            )
+            return
+        if message.animation:  # GIF
+            await self._store(
+                message, EVENT_ANIMATION,
+                self._media_details(
+                    message.animation.file_id, EVENT_ANIMATION, message.caption
+                ),
+            )
+            return
+        if message.photo:
+            await self._store(
+                message, EVENT_PHOTO,
+                self._media_details(
+                    message.photo[-1].file_id, EVENT_PHOTO, message.caption
+                ),
+            )
+            return
+        if message.video:
+            await self._store(
+                message, EVENT_VIDEO,
+                self._media_details(
+                    message.video.file_id, EVENT_VIDEO, message.caption
+                ),
+            )
+            return
+
+        # oddiy matn
+        await self._store(
+            message, EVENT_TEXT, message.text or message.caption or NO_TEXT
+        )
+
+    async def report_edited(self, message: Message) -> None:
+        """edited_business_message — faqat suhbatdosh MATN tahriri haqida.
+
+        * Egasining o'z tahriri           -> jim (kesh yangilanadi).
+        * Media tahriri (izoh o'zgarishi) -> jim (kesh yangilanadi) — media
+          haqida faqat O'CHIRILGANDA xabar beriladi.
+        * Suhbatdosh matn tahriri         -> ✏️ hisobot (📱 Default → 📲 Edited).
+        """
+        owner_id = await self._activate(message.business_connection_id)
+        if owner_id is None:
+            return
+
+        chat_id = message.chat.id if message.chat else 0
+        stored = await db.get_event_by_message(chat_id, message.message_id)
+        is_media = self._has_media(message)
+
+        # 1) Keshni har doim yangilaymiz — keyingi o'chirish hisoboti shunga
+        #    tayanadi (media izohining o'zgarishi ham shu yerda qamrab olinadi).
+        if is_media:
+            event_type, file_id, caption = self._current_media(message)
+            if event_type and file_id:
+                details = self._media_details(file_id, event_type, caption)
+                if stored:
+                    await db.update_event_details(
+                        chat_id, message.message_id, details
+                    )
+                else:
+                    await self._store(message, event_type, details)
+        else:
+            fresh = message.text or message.caption or NO_TEXT
+            if stored:
+                await db.update_event_details(chat_id, message.message_id, fresh)
+            else:
+                await self._store(message, EVENT_TEXT, fresh)
+
+        # Statistika yozuvi (DB uchun — hisobot EMAS).
+        await self._store_stat(
+            message, EVENT_EDIT,
+            f"edited: {(message.text or message.caption or 'media')[:120]}",
+        )
+
+        # 2) Hisobot — faqat suhbatdoshning MATN tahriri.
+        sender = message.from_user
+        if is_media or sender is None or sender.id == owner_id:
+            return
+        old_text = (
+            self._plain_content(stored.get("details") or "") if stored else NO_TEXT
+        )
+        new_text = message.text or message.caption or NO_TEXT
+        body = REPORT_EDIT.format(
+            who=self._who_from_user(sender),
+            old=self._clip(old_text),
+            new=self._clip(new_text),
+        )
+        await self._send(
+            self._owner_chat, body + self._footer(self._chat_name(message))
+        )
+
+    async def report_deleted(self, deleted: BusinessMessagesDeleted) -> None:
+        """deleted_business_messages — suhbatdosh NIMA o'chirganini ko'rsatish.
+
+        Har bir o'chirilgan xabar uchun:
+        * matn bo'lsa   -> to'liq ASL MATN chiqariladi;
+        * media bo'lsa  -> keshlangan fayl QAYTA YUBORILADI;
+        * eganing o'z xabari yoki keshda yo'q id — JIM o'tkazib yuboriladi.
+        """
+        owner_id = await self._activate(deleted.business_connection_id)
+        if owner_id is None:
+            return
+
+        chat = deleted.chat
+        chat_id = chat.id if chat else 0
+        chat_title = self._chat_title_of(chat)
+
+        for mid in deleted.message_ids[:MAX_BULK_DELETES]:
+            stored = await db.get_event_by_message(chat_id, mid)
+
+            if not stored:
+                # Keshda yo'q: ulanishdan OLDIN yuborilgan yoki egasining o'z
+                # xabari.  Kimga tegishliligini bilolmaymiz — shovqinsiz.
+                logger.info("Delete skipped: message %s is not cached", mid)
+                continue
+            sender_id = stored.get("sender_id")
+            if sender_id and int(sender_id) == owner_id:
+                continue  # eganing o'z xabari — hisobot YO'Q (talab)
+
+            event_type = stored.get("event_type") or EVENT_TEXT
+            details = stored.get("details") or ""
+            label = KIND_LABELS.get(event_type, KIND_LABELS[EVENT_TEXT])
+            who = await self._who_for_delete(chat, stored)
+
+            if event_type == EVENT_TEXT:
+                # 1) MATN: to'liq asl matn ko'rsatiladi.
+                body = REPORT_DELETED_TEXT.format(
+                    who=who, original=self._clip(self._plain_content(details))
+                )
+                await self._send(
+                    self._owner_chat, body + self._footer(chat_title)
+                )
+            elif event_type in MEDIA_EVENTS:
+                # 2) MEDIA: keshlangan faylni QAYTA YUBORAMIZ.
+                sent_ok = False
+                file_id = self._extract_file_id(details)
+                if file_id:
+                    sent_ok = await self._resend_media(
+                        self._owner_chat, event_type, file_id,
+                        header=REPORT_DELETED_MEDIA_CAPTION.format(
+                            kind=label, who=who
+                        ),
+                        chat_title=chat_title,
+                        caption=self._media_caption(details),
+                    )
+                if not sent_ok:
+                    body = REPORT_DELETED_MEDIA.format(kind=label, who=who, mid=mid)
+                    await self._send(
+                        self._owner_chat, body + self._footer(chat_title)
+                    )
+            else:
+                continue
+
+            # Statistika yozuvi (DB uchun — hisobot EMAS).
+            await db.add_event(
+                user_id=owner_id,
+                event_type=(
+                    EVENT_DELETE_MEDIA if event_type in MEDIA_EVENTS else EVENT_DELETE
+                ),
+                details=f"deleted {label.lower()}: {details[:100]}",
+                chat_id=chat.id if chat else None,
+                chat_title=chat_title,
+                message_id=None,  # asl yozuvni "soyabon" qilmasin
+            )
+
+    # ------------------------------------------------------------ internals
+
+    async def _activate(self, connection_id: Optional[str]) -> Optional[int]:
+        """Ulanishni tekshiradi va egasini keshlaydi.
+
+        Ulanish faol va egasining kirish statusi 'approved' bo'lsa — eganing
+        user_id qaytariladi (hisobot manzili ham keshlanadi).  Aks holda
+        None: na kesh, na hisobot.  Har bir 'yo'q' sababi LOG qilinadi.
+        """
+        if not connection_id:
+            logger.warning("Reporter: business_connection_id bo'sh — update o'tdi")
+            return None
+        conn = await db.get_connection(connection_id)
+        if not conn:
+            logger.warning("Reporter: ulanish DBda topilmadi (%s)", connection_id)
+            return None
+        if not conn.get("is_enabled"):
+            logger.info("Reporter: ulanish o'chirilgan (%s)", connection_id)
+            return None
+        owner = await db.get_user(conn["user_id"])
+        if owner and (owner.get("access_status") or "pending") != "approved":
+            logger.info(
+                "Reporter: eganing kirish statusi 'approved' emas (user=%s)",
+                conn["user_id"],
+            )
+            return None
+        self._owner_id = int(conn["user_id"])
+        chat_id = conn.get("user_chat_id") or conn.get("user_id")
+        self._owner_chat = int(chat_id) if chat_id else None
+        return self._owner_id
+
+    # -- tarkib kesh formati -----------------------------------------------
+    # matn :  to'liq matn (escape QILINMAGAN xom holda)
+    # media:  "file:<file_id>|<event_type>|<caption>"
+
+    @staticmethod
+    def _media_details(
+        file_id: str, event_type: str, caption: Optional[str] = None
+    ) -> str:
+        return f"file:{file_id}|{event_type}|{caption or ''}"
+
+    @staticmethod
+    def _extract_file_id(details: str) -> Optional[str]:
+        """'file:<id>|...' dan file_id ni oladi."""
+        if details.startswith("file:"):
+            payload = details[5:]
+            return payload.split("|", 1)[0] or None
+        return None
+
+    @staticmethod
+    def _media_caption(details: str) -> Optional[str]:
+        """Keshlangan media izohi (caption) — 3-qism bo'lsa."""
+        parts = details.split("|", 2)
+        if len(parts) == 3 and parts[2]:
+            return parts[2]
+        return None
+
+    @staticmethod
+    def _plain_content(details: str) -> str:
+        """Matn yozuvidan xom matnni oladi (escape holda emas)."""
+        return details
+
+    @staticmethod
+    def _has_media(message: Message) -> bool:
+        return bool(
+            message.sticker
+            or message.animation
+            or message.photo
+            or message.video
+        )
+
+    def _current_media(
+        self, message: Message
+    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        """Tahrirlangan xabardagi joriy media -> (tur, file_id, izoh)."""
+        if message.sticker:
+            return EVENT_STICKER, message.sticker.file_id, None
+        if message.animation:
+            return (
+                EVENT_ANIMATION,
+                message.animation.file_id,
+                message.caption,
+            )
+        if message.photo:
+            return EVENT_PHOTO, message.photo[-1].file_id, message.caption
+        if message.video:
+            return EVENT_VIDEO, message.video.file_id, message.caption
+        return None, None, None
+
+    # -- "Kim" va chat nomlari ------------------------------------------------
+
+    def _who_from_user(self, user: TgUser) -> str:
+        """Hisobotdagi 'Who' — USERNAME ustun: @username, bo'lmasa ism."""
+        if user is None:
+            return WHO_UNKNOWN
+        if user.username:
+            return f"@{user.username}"
+        name = user.first_name or str(user.id)
+        return mention_by_id(user.id, name)
+
+    async def _who_for_delete(self, chat: Optional[Chat], stored: dict) -> str:
+        """O'chirilgan xabar KIMniki — username afzal ko'riladi.
+
+        Suhbatdoshlar bot bilan /start qilmaydi, shuning uchun ular users
+        jadvalida bo'lmasligi mumkin — unda chat ma'lumotidan foydalanamiz.
+        """
+        sender_id = stored.get("sender_id")
+        if sender_id:
+            user = await db.get_user(int(sender_id))
+            if user:
+                username = user.get("username")
+                if username:
+                    return f"@{username}"
+                name = user.get("first_name") or str(sender_id)
+                return mention_by_id(int(sender_id), name, username)
+        if chat is not None and chat.type == "private" and chat.username:
+            return f"@{chat.username}"
+        if chat is not None:
+            raw = chat.first_name or chat.title
+            if raw:
+                return esc(raw[:MAX_TITLE])
+        title = stored.get("chat_title")
+        if title:
+            return esc(title[:MAX_TITLE])
+        return WHO_UNKNOWN
+
+    @staticmethod
+    def _chat_title_of(chat: Optional[Chat]) -> str:
+        if chat is None:
+            return UNKNOWN_CHAT
+        raw = chat.title or chat.first_name or chat.username
+        return esc(raw[:MAX_TITLE]) if raw else UNKNOWN_CHAT
+
+    @staticmethod
+    def _chat_name(message: Message) -> str:
+        if message.chat is None:
+            return UNKNOWN_CHAT
+        title = message.chat.title or message.chat.first_name or message.chat.username
+        return esc(title[:MAX_TITLE]) if title else UNKNOWN_CHAT
+
+    # -- yuborish ------------------------------------------------------------
+
+    def _footer(self, chat_title: str) -> str:
+        return REPORT_FOOTER.format(chat=chat_title, time=self._now_hms())
+
+    async def _resend_media(
+        self,
+        chat_id: Optional[int],
+        event_type: str,
+        file_id: str,
+        *,
+        header: str,
+        chat_title: str,
+        caption: Optional[str] = None,
+    ) -> bool:
+        """Saqlangan media faylni qayta yuborish (o'chirilganda).
+
+        header — sarlavha ("🗑 Photo deleted" + Kim).  Muvaffaqiyatsiz bo'lsa
+        False qaytaradi — chaqiruvchi matnli zaxira variant yuboradi.
+        """
+        if chat_id is None:
+            return False
+        cap = header
+        if caption:
+            cap += f"\n💬 Caption: {self._clip(caption)}"
+        cap += self._footer(chat_title)
+
+        try:
+            if event_type == EVENT_STICKER:
+                await self.bot.send_sticker(chat_id, sticker=file_id)
+                # Stikerlarga caption yozib bo'lmaydi — izoh alohida ketadi.
+                await self._send(chat_id, cap)
+            elif event_type == EVENT_PHOTO:
+                await self.bot.send_photo(
+                    chat_id, photo=file_id, caption=cap, parse_mode="HTML"
+                )
+            elif event_type == EVENT_VIDEO:
+                await self.bot.send_video(
+                    chat_id, video=file_id, caption=cap, parse_mode="HTML"
+                )
+            elif event_type == EVENT_ANIMATION:
+                await self.bot.send_animation(
+                    chat_id, animation=file_id, caption=cap, parse_mode="HTML"
+                )
+            else:
+                return False
+            return True
+        except Exception:  # noqa: BLE001 – fayl muddati tugagan bo'lishi mumkin
+            logger.info("Resend of cached media failed (type=%s)", event_type)
+            return False
+
+    async def _send(self, chat_id: Optional[int], html: str) -> None:
+        if chat_id is None:
+            logger.warning("Reporter: hisobot manzili yo'q — yuborilmadi")
+            return
+        for attempt in (1, 2):
+            try:
+                await self.bot.send_message(
+                    chat_id, html, parse_mode="HTML", disable_web_page_preview=True
+                )
+                return
+            except TelegramRetryAfter as exc:
+                # 429: Telegram aytgan vaqticha kutib BIR martta qayta urinamiz.
+                if attempt == 2:
+                    break
+                await asyncio.sleep(exc.retry_after + 1)
+            except Exception:  # noqa: BLE001
+                logger.info("Could not deliver report to chat %s", chat_id)
+                return
+        logger.info("Could not deliver report to chat %s (flood)", chat_id)
+
+    # -- DB yozuvlari ----------------------------------------------------------
+
+    async def _store(
+        self, message: Message, event_type: str, details: str
+    ) -> None:
+        """Xabar yozuvini KESHlash (chat_id + message_id + sender_id bilan).
+
+        sender_id — aynan kim yubordi (ega yoki suhbatdosh): o'chirilganda
+        egasining o'z xabarini JIM o'tkazib yuborish uchun kerak.
+        """
+        await db.add_event(
+            user_id=self._owner_id or 0,
+            event_type=event_type,
+            details=details,
+            chat_id=message.chat.id if message.chat else None,
+            chat_title=self._chat_name(message),
+            message_id=message.message_id,
+            sender_id=message.from_user.id if message.from_user else None,
+        )
+
+    async def _store_stat(
+        self, message: Message, event_type: str, details: str
+    ) -> None:
+        """Faqat statistika yozuvi (message_id YO'Q — keshni soyabon qilmasin)."""
+        await db.add_event(
+            user_id=self._owner_id or 0,
+            event_type=event_type,
+            details=details,
+            chat_id=message.chat.id if message.chat else None,
+            chat_title=self._chat_name(message),
+            message_id=None,
+            sender_id=message.from_user.id if message.from_user else None,
+        )
+
+    # ---------------------------------------------------------- kichik util
+
+    @staticmethod
+    def _clip(text: str) -> str:
+        text = esc(text)
+        if len(text) <= MAX_TEXT:
+            return text
+        return text[:MAX_TEXT] + TRUNCATED
+
+    @staticmethod
+    def _now_hms() -> str:
+        return fmt_time(datetime.now())

@@ -1,0 +1,12 @@
+2026-09-13 23:06:10 | INFO     | app.storage_sqlite | SQLite ready at bot.db (Supabase not configured)
+2026-09-13 23:06:10 | WARNING  | app.database | SUPABASE_DB_URL yo'q — hozircha mahalliy SQLite (bot.db) ishlatiladi. Supabasega o'tish uchun .env ga SUPABASE_DB_URL qo'shing.
+2026-09-13 23:06:10 | INFO     | app.main | Bot is starting (admin=5794972204)...
+2026-09-13 23:06:10 | INFO     | app.services.watchdog | Watchdog: events pruned
+2026-09-13 23:06:11 | INFO     | app.main | Bot o'chirik bo'lgan davrda 3 ta update to'plangan bo'lib, ular endi qayta yuborilmaydi (so'rovlar panelda ko'rinadi).
+2026-09-13 23:06:11 | INFO     | aiogram.dispatcher | Start polling
+2026-09-13 23:06:11 | INFO     | aiogram.dispatcher | Run polling for bot @privatezeninbot id=8862579492 - 'Private Bot'
+2026-09-13 23:06:16 | WARNING  | aiogram.dispatcher | Received SIGTERM signal
+2026-09-13 23:06:16 | INFO     | aiogram.dispatcher | Polling stopped for bot @privatezeninbot id=8862579492 - 'Private Bot'
+2026-09-13 23:06:16 | INFO     | aiogram.dispatcher | Polling stopped
+2026-09-13 23:06:16 | INFO     | app.storage_sqlite | SQLite closed
+2026-09-13 23:06:16 | INFO     | app.main | Bot stopped.

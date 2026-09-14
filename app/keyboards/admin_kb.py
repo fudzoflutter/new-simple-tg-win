@@ -1,0 +1,257 @@
+"""
+Faqat admin uchun inline klaviaturalar (o'zbek tilida).
+
+Premium tugmasi (2-band) hammaga ko'rinadigan asosiy menyuda, lekin admin
+panel (5-band) faqat ``settings.admin_id`` egasiga ochiq — bu
+:class:`app.filters.IsAdmin` filtri bilan ta'minlangan.
+"""
+
+from __future__ import annotations
+
+from aiogram.types import InlineKeyboardMarkup
+
+from app.utils.ui import BtnStyle, CustomEmoji, btn, kb
+
+# Callback prefikslari.
+CB_PANEL = "adm:panel"
+CB_USERS = "adm:users"
+CB_USER = "adm:user:"
+CB_USER_BAN = "adm:ban:"
+CB_USER_UNBAN = "adm:unban:"
+CB_USER_GRANT = "adm:grant:"
+CB_USER_PREM_OFF = "adm:premoff:"
+CB_ONLINE = "adm:online"
+CB_PLANS = "adm:plans"
+CB_PLAN_ADD = "adm:plan:add"
+CB_PLAN_VIEW = "adm:plan:view:"
+CB_PLAN_TOGGLE = "adm:plan:toggle:"
+CB_PLAN_DELETE = "adm:plan:del:"
+CB_PLAN_EDIT = "adm:plan:edit:"
+CB_PAYMENTS = "adm:pays"
+CB_PAYMENT = "adm:pay:"
+CB_PAYMENT_OK = "adm:pay:ok:"
+CB_PAYMENT_NO = "adm:pay:no:"
+CB_BROADCAST = "adm:bcast"
+CB_BROADCAST_SEND = "adm:bcast:go"
+CB_CANCEL = "adm:cancel"
+CB_BACK_MENU = "user:menu"  # foydalanuvchi tomoni bilan umumiy
+
+# -- Kirish so'rovlarini tasdiqlash (yangi talab) -----------------------------
+CB_ACCESS = "adm:access"
+CB_ACCESS_OK = "adm:access:ok:"
+CB_ACCESS_NO = "adm:access:no:"
+
+# -- Premium bo'limini yoqish/o'chirish (yangi talab) -------------------------
+CB_PREMIUM_TOGGLE = "adm:premium:toggle"
+
+PAGE_SIZE = 5
+
+
+def panel(
+    pending_access: int = 0,
+    pending_payments: int = 0,
+    premium_enabled: bool = False,
+) -> InlineKeyboardMarkup:
+    """Admin panel: kirish so'rovlari, foydalanuvchilar, tariflar, to'lovlar
+    va Premium bo'limini yoqish/o'chirish tugmasi (yangi talab)."""
+    access_label = f"✅ Kirish so'rovlari ({pending_access})" if pending_access else "✅ Kirish so'rovlari"
+    pays_label = f"💳 To'lovlar ({pending_payments})" if pending_payments else "💳 To'lovlar"
+    return kb(
+        [
+            [btn(access_label, CB_ACCESS, style=BtnStyle.SUCCESS, emoji_id=CustomEmoji.ADMIN)],
+            [
+                btn("👥 Foydalanuvchilar", CB_USERS, style=BtnStyle.PRIMARY, emoji_id=CustomEmoji.ADMIN),
+                btn("🟢 Onlayn", CB_ONLINE, style=BtnStyle.SUCCESS),
+            ],
+            [
+                btn("🗓 Premium tariflar", CB_PLANS, style=BtnStyle.PRIMARY, emoji_id=CustomEmoji.PREMIUM),
+                btn(pays_label, CB_PAYMENTS, style=BtnStyle.SUCCESS),
+            ],
+            [
+                btn("📣 Ommaviy xabar", CB_BROADCAST, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BROADCAST)
+            ],
+            [
+                btn(
+                    "💎 Premium bo'limi: YOQISH" if not premium_enabled else "💎 Premium bo'limi: O'CHIRISH",
+                    CB_PREMIUM_TOGGLE,
+                    style=BtnStyle.SUCCESS if not premium_enabled else BtnStyle.DANGER,
+                    emoji_id=CustomEmoji.PREMIUM,
+                )
+            ],
+            [btn("🔙 Menyuga qaytish", CB_BACK_MENU, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)],
+        ]
+    )
+
+
+def access_buttons(pairs: list[tuple[str, int]]) -> list[list]:
+    """Har bir so'rov uchun bitta qator-tugma -> kartochka ochiladi."""
+    return [[btn(label, f"{CB_USER}{user_id}") for label, user_id in [pair]] for pair in pairs]
+
+
+def access_pager(page: int, pages: int, user_rows: list[list] | None = None) -> InlineKeyboardMarkup:
+    """Kirish so'rovlari ro'yxati + sahifalash."""
+    rows: list = list(user_rows or [])
+    nav: list = []
+    if page > 1:
+        nav.append(btn("◀️", f"{CB_ACCESS}{page - 1}"))
+    if pages > 1:
+        nav.append(btn(f"{page}/{pages}", CB_ACCESS, style=BtnStyle.PRIMARY))
+    if page < pages:
+        nav.append(btn("▶️", f"{CB_ACCESS}{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([btn("🔙 Panel", CB_PANEL, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)])
+    return kb(rows)
+
+
+def access_decision(user_id: int) -> InlineKeyboardMarkup:
+    """So'rov kartochkasidagi Tasdiqlash / Rad etish tugmalari."""
+    return kb(
+        [
+            [
+                btn("✅ Tasdiqlash", f"{CB_ACCESS_OK}{user_id}", style=BtnStyle.SUCCESS),
+                btn("❌ Rad etish", f"{CB_ACCESS_NO}{user_id}", style=BtnStyle.DANGER),
+            ]
+        ]
+    )
+
+
+def users_pager(page: int, pages: int, user_rows: list[list] | None = None) -> InlineKeyboardMarkup:
+    """Foydalanuvchi tugmalari + ◀️ ▶️ navigatsiya."""
+    rows: list = list(user_rows or [])
+    nav: list = []
+    if page > 1:
+        nav.append(btn("◀️", f"{CB_USERS}{page - 1}"))
+    nav.append(btn(f"{page}/{pages}", CB_USERS, style=BtnStyle.PRIMARY))
+    if page < pages:
+        nav.append(btn("▶️", f"{CB_USERS}{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append(
+        [btn("🟢 Onlayn", CB_ONLINE, style=BtnStyle.SUCCESS), btn("🔙 Panel", CB_PANEL, style=BtnStyle.DANGER)]
+    )
+    return kb(rows)
+
+
+def user_buttons(pairs: list[tuple[str, int]]) -> list[list]:
+    """Har bir foydalanuvchi uchun qator-tugma -> kartochka (adm:user:<id>)."""
+    return [[btn(label, f"{CB_USER}{user_id}") for label, user_id in [pair]] for pair in pairs]
+
+
+def user_card(user_id: int, banned: bool, premium_active: bool = False) -> InlineKeyboardMarkup:
+    """Profil havolasi + obuna berish/olish + cheklash (5-band + yangi talab)."""
+    rows = [
+        [
+            btn(
+                "🔗 Profilni ochish",
+                url=f"tg://user?id={user_id}",
+                style=BtnStyle.PRIMARY,
+            )
+        ],
+        # Yangi talab: DBdagi aynan shu foydalanuvchiga obuna berish.
+        [btn("🎁 Obuna berish", f"{CB_USER_GRANT}{user_id}", style=BtnStyle.SUCCESS)],
+    ]
+    if premium_active:
+        rows.append(
+            [btn("🗑 Obunani olib qo'yish", f"{CB_USER_PREM_OFF}{user_id}", style=BtnStyle.DANGER)]
+        )
+    if banned:
+        rows.append([btn("✅ Bandan chiqarish", f"{CB_USER_UNBAN}{user_id}", style=BtnStyle.SUCCESS)])
+    else:
+        rows.append([btn("⛔️ Cheklash", f"{CB_USER_BAN}{user_id}", style=BtnStyle.DANGER)])
+    rows.append([btn("🔙 Ro'yxatga", CB_USERS, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)])
+    return kb(rows)
+
+
+def online_list() -> InlineKeyboardMarkup:
+    return kb([[btn("🔙 Panel", CB_PANEL, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)]])
+
+
+def plans_menu() -> InlineKeyboardMarkup:
+    return kb(
+        [
+            [btn("➕ Tarif yaratish", CB_PLAN_ADD, style=BtnStyle.SUCCESS, emoji_id=CustomEmoji.PREMIUM)],
+            [btn("🔙 Panel", CB_PANEL, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)],
+        ]
+    )
+
+
+def plans_menu_with(plan_rows: list[list]) -> InlineKeyboardMarkup:
+    """Tariflar ro'yxati: har bir tarif NOMI tugma (kartochka ochiladi) + ➕."""
+    return kb(
+        list(plan_rows)
+        + [
+            [btn("➕ Tarif yaratish", CB_PLAN_ADD, style=BtnStyle.SUCCESS, emoji_id=CustomEmoji.PREMIUM)],
+            [btn("🔙 Panel", CB_PANEL, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)],
+        ]
+    )
+
+
+def plan_row(plan_id: int) -> InlineKeyboardMarkup:
+    """Bitta tarifni boshqarish: tahrirlash, yashirish/ko'rsatish, o'chirish."""
+    return kb(
+        [
+            [btn("✏️ Tahrirlash", f"{CB_PLAN_EDIT}{plan_id}", style=BtnStyle.PRIMARY)],
+            [
+                btn("👁 Yashirish / ko'rsatish", f"{CB_PLAN_TOGGLE}{plan_id}", style=BtnStyle.PRIMARY),
+                btn("🗑 O'chirish", f"{CB_PLAN_DELETE}{plan_id}", style=BtnStyle.DANGER),
+            ],
+            [btn("🔙 Barcha tariflar", CB_PLANS, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)],
+        ]
+    )
+
+
+def plan_edit_menu(plan_id: int) -> InlineKeyboardMarkup:
+    """Tahrirlash oynasi: nom / davomiylik / narx / tavsif."""
+    return kb(
+        [
+            [btn("✏️ Nom", f"{CB_PLAN_EDIT}{plan_id}:title", style=BtnStyle.PRIMARY),
+             btn("🗓 Kun", f"{CB_PLAN_EDIT}{plan_id}:duration", style=BtnStyle.PRIMARY)],
+            [btn("💰 Narx", f"{CB_PLAN_EDIT}{plan_id}:price", style=BtnStyle.PRIMARY),
+             btn("📝 Tavsif", f"{CB_PLAN_EDIT}{plan_id}:desc", style=BtnStyle.PRIMARY)],
+            [btn("🔙 Tarifga", f"{CB_PLAN_VIEW}{plan_id}", style=BtnStyle.SUCCESS)],
+            [btn("🔙 Barcha tariflar", CB_PLANS, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)],
+        ]
+    )
+
+
+def plan_delete_confirm(plan_id: int) -> InlineKeyboardMarkup:
+    return kb(
+        [
+            [
+                btn("✅ Ha, o'chirish", f"{CB_PLAN_DELETE}{plan_id}:confirm", style=BtnStyle.DANGER),
+                btn("❌ Bekor qilish", CB_PLANS, style=BtnStyle.PRIMARY),
+            ]
+        ]
+    )
+
+
+def payments_menu() -> InlineKeyboardMarkup:
+    return kb([[btn("🔙 Panel", CB_PANEL, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)]])
+
+
+def payment_decision(payment_id: int) -> InlineKeyboardMarkup:
+    """Chek ostidagi Tasdiqlash / Rad etish tugmalari."""
+    return kb(
+        [
+            [
+                btn("✅ Tasdiqlash", f"{CB_PAYMENT_OK}{payment_id}", style=BtnStyle.SUCCESS),
+                btn("❌ Rad etish", f"{CB_PAYMENT_NO}{payment_id}", style=BtnStyle.DANGER),
+            ]
+        ]
+    )
+
+
+def broadcast_confirm() -> InlineKeyboardMarkup:
+    return kb(
+        [
+            [
+                btn("🚀 Hammaga yuborish", CB_BROADCAST_SEND, style=BtnStyle.DANGER),
+                btn("❌ Bekor qilish", CB_BROADCAST, style=BtnStyle.PRIMARY),
+            ]
+        ]
+    )
+
+
+def cancel_to_panel() -> InlineKeyboardMarkup:
+    return kb([[btn("🔙 Bekor qilish", CB_CANCEL, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)]])

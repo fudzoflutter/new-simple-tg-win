@@ -1,0 +1,27 @@
+# Secrets
+.env
+env.txt
+
+# SQLite database
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Runtime logs (rotating, written by app/utils/logger.py)
+logs/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
