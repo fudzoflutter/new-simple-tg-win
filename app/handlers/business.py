@@ -50,8 +50,8 @@ def _mention(user: TgUser) -> str:
 
 
 async def _premium_enabled_flag() -> bool:
-    """Premium bo'limi ochiqmi (menyu uchun)."""
-    return (await db.get_setting("premium_enabled", "0")) == "1"
+    """Premium bo'limi ochiqmi (KESHLANGAN o'qish — tezlik uchun)."""
+    return (await db.get_setting_cached("premium_enabled", "0")) == "1"
 
 
 # ---------------------------------------------------------------------------

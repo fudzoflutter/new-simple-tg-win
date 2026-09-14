@@ -46,31 +46,53 @@ async def show_panel(cb: CallbackQuery, state: FSMContext) -> None:
 
 
 async def _panel_kb() -> InlineKeyboardMarkup:
-    """Panel klaviaturasi — to'lovlar soni + Premium holati bilan."""
+    """Panel klaviaturasi — to'lovlar soni + Premium holati bilan.
+
+    Tezlik: 2 so'rov PARALLEL (ketma-ket emas).
+    """
+    payments, prem = await db.gather(
+        db.pending_payments(),
+        premium_enabled(),
+    )
     return admin_kb.panel(
-        pending_payments=len(await db.pending_payments()),
-        premium_enabled=await premium_enabled(),
+        pending_payments=len(payments),
+        premium_enabled=prem,
     )
 
 
 async def premium_enabled() -> bool:
-    """Premium bo'limi hozir yoqilganmi? (DBda saqlanadi, default — o'chiq)"""
-    return (await db.get_setting("premium_enabled", "0")) == "1"
+    """Premium bo'limi ochiqmi? (KESHLANGAN o'qish — 5 sek TTL)"""
+    return (await db.get_setting_cached("premium_enabled", "0")) == "1"
 
 
 async def _dashboard_text() -> str:
-    """Panel sarlavhasidagi jonli raqamlar."""
-    total = await db.count_users()
-    banned = total - await db.count_users(only_active=True)
+    """Panel sarlavhasidagi jonli raqamlar.
+
+    Tezlik: 6 ta so'rov PARALLEL — panel ~1 so'rov vaqtida ochiladi
+    (avval 6 × ~200 ms = ~1.2 s ketardi).
+    """
+    (
+        total,
+        active,
+        online,
+        premium,
+        connected,
+        prem,
+    ) = await db.gather(
+        db.count_users(),
+        db.count_users(only_active=True),
+        db.count_online(ONLINE_WINDOW_SECONDS),
+        db.premium_users(),
+        db.connected_user_ids(),
+        premium_enabled(),
+    )
     return texts.ADMIN_TITLE.format(
         users=total,
-        online=await db.count_online(ONLINE_WINDOW_SECONDS),
-        premium=len(await db.premium_users()),
-        premium_state=texts.PREMIUM_STATE_ON
-        if await premium_enabled()
-        else texts.PREMIUM_STATE_OFF,
-        connected=len(await db.connected_user_ids()),
-        banned=banned,
+        online=online,
+        premium=len(premium),
+        premium_state=texts.PREMIUM_STATE_ON if prem else texts.PREMIUM_STATE_OFF,
+        connected=len(connected),
+        banned=total - active,
     )
 
 
@@ -86,8 +108,9 @@ async def toggle_premium(cb: CallbackQuery) -> None:
         texts.ADMIN_PREMIUM_ON if new_state else texts.ADMIN_PREMIUM_OFF,
         show_alert=True,
     )
-    # Panelni yangilash — tugma va holat darhol almashadi.
-    await cb.message.edit_text(await _dashboard_text(), reply_markup=await _panel_kb())
+    # Panelni yangilash — tugma va holat darhol almashadi (PARALLEL).
+    text, markup = await db.gather(_dashboard_text(), _panel_kb())
+    await cb.message.edit_text(text, reply_markup=markup)
 
 
 # ---------------------------------------------------------------------------
@@ -149,13 +172,18 @@ async def show_users(cb: CallbackQuery, state: FSMContext) -> None:
 # Bitta foydalanuvchi kartochkasi: profil + cheklash (5-band)
 # ---------------------------------------------------------------------------
 async def _render_user_card(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
-    """Kartochka matni + klaviatura (ko'rish va yangilashda umumiy)."""
+    """Kartochka matni + klaviatura (ko'rish va yangilashda umumiy).
+
+    Tezlik: 3 so'rov PARALLEL (~1 so'rov vaqti).
+    """
     row = await db.get_user(user_id)
     if row is None:
         return texts.ADMIN_USER_NOT_FOUND, admin_kb.online_list()
 
-    events_count = await db.count_user_events(user_id)
-    conns = await db.connections_for_user(user_id)
+    events_count, conns = await db.gather(
+        db.count_user_events(user_id),
+        db.connections_for_user(user_id),
+    )
     premium = parse_dt(row.get("premium_until"))
     is_premium = premium is not None and premium > datetime.now()
 

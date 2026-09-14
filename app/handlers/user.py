@@ -41,8 +41,12 @@ router = Router(name="user")
 
 
 async def _premium_enabled() -> bool:
-    """Premium bo'limi hozir hammaga ochiqmi? (admin panelda yoqiladi)"""
-    return (await db.get_setting("premium_enabled", "0")) == "1"
+    """Premium bo'limi ochiqmi? (KESHLANGAN — har bir tugmada DBga uchmaydi)"""
+    return (await db.get_setting_cached("premium_enabled", "0")) == "1"
+
+
+# Bot username hech qachon o'zgarmaydi — bir marta so'raymiz, keyin kesh.
+_bot_username: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -53,14 +57,15 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     """Kirish nuqtasi: banlangan bo'lmasa — to'g'ridan-to'g'ri menyu."""
     await state.clear()
 
-    row = await db.get_user(message.from_user.id)
+    # ParALLEL: foydalanuvchi + ulanishlar (2 so'rov ~1 so'rov vaqtida).
+    row, conns = await db.gather(
+        db.get_user(message.from_user.id),
+        db.connections_for_user(message.from_user.id),
+    )
 
     if (row or {}).get("is_banned"):
         await message.answer(texts.BANNED)
         return
-
-    # Foydalanuvchi — menyuni ochamiz (ulanish holati bilan).
-    conns = await db.connections_for_user(message.from_user.id)
     is_connected = any(c.get("is_enabled") for c in conns)
     if is_connected:
         await message.answer(
@@ -145,16 +150,22 @@ async def show_my_sub(cb: CallbackQuery) -> None:
 @router.callback_query(F.data == user_kb.CB_STATS)
 async def show_stats(cb: CallbackQuery) -> None:
     """Shaxsiy statistika ekrani (premium emoji IDlari bilan bezatilgan)."""
-    user = await db.get_user(cb.from_user.id) or {}
-    conns = await db.connections_for_user(cb.from_user.id)
+    # ParALLEL: foydalanuvchi + ulanishlar (2 so'rov ~1 so'rov vaqtida).
+    user, conns = await db.gather(
+        db.get_user(cb.from_user.id),
+        db.connections_for_user(cb.from_user.id),
+    )
+    user = user or {}
     connected = any(c.get("is_enabled") for c in conns)
 
-    # Faqat SHU foydalanuvchining raqamlari.
-    total = await db.count_user_events(cb.from_user.id)
-    edits = await db.count_user_events(cb.from_user.id, "edit")
-    deletes = await db.count_user_events(cb.from_user.id, "delete") + await db.count_user_events(
-        cb.from_user.id, "delete_media"
+    # ParALLEL: 4 ta alohida so'rov o'rniga bitta vaqt (~200 ms).
+    total, edits, d1, d2 = await db.gather(
+        db.count_user_events(cb.from_user.id),
+        db.count_user_events(cb.from_user.id, "edit"),
+        db.count_user_events(cb.from_user.id, "delete"),
+        db.count_user_events(cb.from_user.id, "delete_media"),
     )
+    deletes = d1 + d2
 
     body = STATS_BODY.format(
         mention=mention_by_id(
@@ -180,10 +191,12 @@ async def show_stats(cb: CallbackQuery) -> None:
 @router.callback_query(F.data == user_kb.CB_CONNECT)
 async def show_connect(cb: CallbackQuery) -> None:
     """Sozlamalar → Telegram Business → Chatbotlar yo'riqnomasi."""
-    me = await cb.bot.me()
-    bot_username = me.username or ""
+    global _bot_username
+    if not _bot_username:  # getMe API so'rovi FAQAT birinchi marta
+        me = await cb.bot.me()
+        _bot_username = me.username or ""
     await cb.message.edit_text(
-        texts.CONNECT_TITLE.format(bot_username=bot_username),
+        texts.CONNECT_TITLE.format(bot_username=_bot_username),
         reply_markup=user_kb.connect_menu(),
         disable_web_page_preview=True,
     )
@@ -203,15 +216,15 @@ async def show_premium(cb: CallbackQuery, state: FSMContext) -> None:
         return
 
     await state.clear()
-    plans = await db.active_plans()
+    # ParALLEL: tariflar + foydalanuvchi holati.
+    plans, user = await db.gather(db.active_plans(), db.get_user(cb.from_user.id))
+    user = user or {}
     if not plans:
         await cb.message.edit_text(
             texts.PREMIUM_NO_PLANS, reply_markup=user_kb.back_to_menu()
         )
         await cb.answer()
         return
-
-    user = await db.get_user(cb.from_user.id) or {}
     until = parse_dt(user.get("premium_until"))
     note = ""
     if until and until > datetime.now():
@@ -219,7 +232,7 @@ async def show_premium(cb: CallbackQuery, state: FSMContext) -> None:
 
     await cb.message.edit_text(
         texts.PREMIUM_TITLE + note,
-        reply_markup=await user_kb.premium_plans(db),
+        reply_markup=user_kb.premium_plans(plans),  # plans allaqachon olingan
     )
     await cb.answer()
 

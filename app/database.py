@@ -146,6 +146,9 @@ class Database:
 
     def __init__(self) -> None:
         self._backend: Any = None  # PostgresDatabase | SqliteDatabase
+        # Tezlik: sozlamalar (key-value) uchun qisqa TTL kesh — har bir
+        # ekran har safar DBga uchib ketmasin (5 sek yetarli).
+        self._settings_cache: dict[str, tuple[float, str]] = {}
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -170,6 +173,19 @@ class Database:
         if self._backend is not None:
             await self._backend.close()
             self._backend = None
+
+    async def gather(self, *aws: Any) -> list[Any]:
+        """Bir nechta DB so'rovini PARALLEL bajarish (tezlik uchun).
+
+        Supabase Sydney ~200 ms uzoqda: 5 ta ketma-ket so'rov = 1 sekund,
+        parallel = ~200 ms.  Havola havzasida (pool) parallel ishlaydi.
+
+        Misol: ``user, conns, total = await db.gather(
+            db.get_user(uid), db.connections_for_user(uid), db.count_user_events(uid))``
+        """
+        import asyncio
+
+        return list(await asyncio.gather(*aws))
 
     # -- delegation -----------------------------------------------------------
     # Har bir metod real backendga yo'naltiriladi.
@@ -320,8 +336,28 @@ class Database:
     async def get_setting(self, key: str, default: str = "") -> str:
         return await self._backend.get_setting(key, default)
 
+    async def get_setting_cached(self, key: str, default: str = "", ttl: float = 5.0) -> str:
+        """``get_setting`` + 5 sekundlik kesh (tezlik uchun).
+
+        Ko'p o'qiladigan sozlamalar (masalan ``premium_enabled``) har bir
+        tugmada DBga ketmasligi kerak.  ``set_setting`` keshni darhol
+        yangilaydi — admin o'zgartirishi 5 sek ichida hammaga ko'rinadi.
+        """
+        import time as _time
+
+        now = _time.monotonic()
+        hit = self._settings_cache.get(key)
+        if hit is not None and now - hit[0] < ttl:
+            return hit[1]
+        value = await self._backend.get_setting(key, default)
+        self._settings_cache[key] = (now, value)
+        return value
+
     async def set_setting(self, key: str, value: str) -> None:
         await self._backend.set_setting(key, value)
+        import time as _time
+
+        self._settings_cache[key] = (_time.monotonic(), value)
 
 
 class PostgresDatabase:
@@ -370,8 +406,8 @@ class PostgresDatabase:
         try:
             self._pool = await asyncpg.create_pool(
                 settings.supabase_db_url,
-                min_size=1,
-                max_size=5,
+                min_size=2,
+                max_size=10,
                 timeout=30,
                 # Supabase "Connection pooling" URI orqali ulanganda
                 # PgBouncer (transaction mode) ishlatiladi — u prepared

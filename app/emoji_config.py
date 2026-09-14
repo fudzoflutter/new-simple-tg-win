@@ -16,10 +16,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+# ---------------------------------------------------------------------------
+# PREMIUM EMOJI YOQISH KALITI (muhim!)
+#
+# Telegram FAQAT Fragment'da qo'shimcha username/raqam sotib olgan botlarga
+# xabar MATNIDA <tg-emoji> yuborishga ruxsat beradi.  Oddiy botda har qanday
+# <tg-emoji> "Bad Request: DOCUMENT_INVALID" xatosini beradi — butun ekran
+# ochilmaydi.  Shuning uchun standartda O'CHIQ.
+#
+# Bot akkountiga Fragment kolleksiyoni olganingizdan keyin True qiling —
+# o'shanda quyidagi IDlar animatsion premium emoji bo'lib ko'rina boshlaydi.
+# ---------------------------------------------------------------------------
+ENABLE_PREMIUM_EMOJI_TAGS = False
+
 
 def tg_e(emoji_id: str | None, fallback: str) -> str:
-    """Premium emoji uchun <tg-emoji> tegi (ID bo'sh bo'lsa — oddiy emoji)."""
-    if not emoji_id:
+    """Premium emoji uchun <tg-emoji> tegi.
+
+    Kalit o'chiq bo'lsa YOKI ID bo'sh bo'lsa — oddiy emoji qaytadi
+    (Telegram xato bermasligi uchun)."""
+    if not ENABLE_PREMIUM_EMOJI_TAGS or not emoji_id:
         return fallback
     return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
 

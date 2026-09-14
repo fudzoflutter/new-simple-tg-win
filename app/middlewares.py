@@ -28,6 +28,15 @@ logger = logging.getLogger(__name__)
 RATE_LIMIT_EVENTS = 5
 RATE_WINDOW = 1.0  # sekund
 
+# Tezlik ( Railway <-> Supabase ~200 ms): har bir update uchun DB YOZUVI
+# juda qimmat.  Yangi foydalanuvchini ro'yxatga olish + last_activity
+# yangilash 60 sekundda BIR marta yetarli ("onlayn" oynasi 120 s).
+UPSERT_INTERVAL_SECONDS = 60.0
+
+# Ban tekshiruvi ham har update'da DB o'qishini talab qilmasin — 30 sek
+# kesh.  Ban/unban kuchga kechikishi <= 30 s (amaliy jihatdan sezilmaydi).
+BAN_CACHE_TTL_SECONDS = 30.0
+
 
 class RegisterUserMiddleware(BaseMiddleware):
     """Foydalanuvchini DBga yozish + faollikni yangilash.
@@ -49,15 +58,21 @@ class RegisterUserMiddleware(BaseMiddleware):
             isinstance(event, Message) and not event.business_connection_id
         )
         if user is not None and not user.is_bot and is_direct:
-            try:
-                await db.upsert_user(
-                    user_id=user.id,
-                    username=user.username,
-                    first_name=user.first_name,
-                    last_name=user.last_name,
-                )
-            except Exception:  # noqa: BLE001 – DB xatosi update'larni uzmasin
-                logger.exception("Failed to upsert user %s", user.id)
+            # TEZLIK: upsert har update'da emas — foydalanuvchi uchun 60 s da
+            # bir marta (yangi foydalanuvchi esa DARHOL yoziladi).
+            now = time.monotonic()
+            last = self._last_upsert.get(user.id, 0.0)
+            if now - last >= UPSERT_INTERVAL_SECONDS:
+                self._last_upsert[user.id] = now
+                try:
+                    await db.upsert_user(
+                        user_id=user.id,
+                        username=user.username,
+                        first_name=user.first_name,
+                        last_name=user.last_name,
+                    )
+                except Exception:  # noqa: BLE001 – DB xatosi update'larni uzmasin
+                    logger.exception("Failed to upsert user %s", user.id)
 
             # Anti-spam: admin uchun emas.
             if user.id != settings.admin_id and self._is_flooding(user.id):
@@ -65,6 +80,8 @@ class RegisterUserMiddleware(BaseMiddleware):
                 return None
 
         return await handler(event, data)
+
+    _last_upsert: dict[int, float] = {}
 
     @staticmethod
     def _is_flooding(user_id: int) -> bool:
@@ -105,14 +122,28 @@ class AccessGuardMiddleware(BaseMiddleware):
         )
 
         if user is not None and user.id != settings.admin_id and is_direct:
-            row = await db.get_user(user.id)
+            # TEZLIK: ban holati 30 s KESHLANADI — har bir tugma uchun DB
+            # o'qish shart emas.  Ban/unban kuchga kechikishi <= 30 s.
+            now = time.monotonic()
+            cached = self._ban_cache.get(user.id)
+            if cached is not None and now - cached[0] < BAN_CACHE_TTL_SECONDS:
+                banned = cached[1]
+            else:
+                row = await db.get_user(user.id)
+                banned = bool(row and row.get("is_banned"))
+                if len(self._ban_cache) > MAX_BUCKETS:
+                    oldest = next(iter(self._ban_cache))
+                    self._ban_cache.pop(oldest, None)
+                self._ban_cache[user.id] = (now, banned)
 
-            if row and row.get("is_banned"):
+            if banned:
                 logger.info("Blocked banned user %s", user.id)
                 await self._reject(event, texts.BANNED, texts.BAN_CALLBACK)
                 return None
 
         return await handler(event, data)
+
+    _ban_cache: dict[int, tuple[float, bool]] = {}
 
     @staticmethod
     async def _reject(event: TelegramObject, html_text: str, plain_text: str) -> None:

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from app.database import Database
 from app.emoji_config import EMOJI
 from app.utils.texts import plan_button_label
 from app.utils.ui import BtnStyle, btn, kb
@@ -130,9 +129,12 @@ def connect_menu(bot_username: str = "") -> InlineKeyboardMarkup:
     )
 
 
-async def premium_plans(db: Database) -> InlineKeyboardMarkup:
-    """Har bir faol tarif uchun bitta rangli tugma ('30 kun - 10 000')."""
-    plans = await db.active_plans()
+def premium_plans(plans: list[dict]) -> InlineKeyboardMarkup:
+    """Har bir faol tarif uchun bitta rangli tugma ('30 kun - 10 000').
+
+    Tariflar RO'YXATI sifatida beriladi (DBdan oldin o'qilgan) — handler
+    boshqa so'rov bilan parallel oladi, ikki marta so'ramaydi.
+    """
     if not plans:
         return kb([[btn("🔙 Menyuga qaytish", CB_BACK_MENU, style=BtnStyle.DANGER)]])
 
