@@ -11,8 +11,9 @@ from __future__ import annotations
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.database import Database
+from app.emoji_config import EMOJI
 from app.utils.texts import plan_button_label
-from app.utils.ui import BtnStyle, CustomEmoji, btn, kb
+from app.utils.ui import BtnStyle, btn, kb
 
 # Callback data prefikslari — handlerlar ham shulardan foydalanadi.
 CB_STATS = "user:stats"
@@ -29,14 +30,18 @@ def main_menu(*, connected: bool = False, premium_enabled: bool = False) -> Inli
     Premium tugmasi standartda YASHIRIN (yangi talab) — admin paneldagi
     "Premium bo'limi" tugmasi orqali yoqilgandagina ko'rinadi.
     """
-    connect_label = "🔗 Ulangan ✓" if connected else "🔗 Ulanish"
+    connect_label = (
+        f"{EMOJI.menu_connect.fallback} Ulangan ✓"
+        if connected
+        else f"{EMOJI.menu_connect.fallback} Ulanish"
+    )
     rows = [
         [
             btn(
-                "📊 Statistika",
+                f"{EMOJI.menu_stats.fallback} Statistika",
                 CB_STATS,
                 style=BtnStyle.PRIMARY,
-                emoji_id=CustomEmoji.STATS,
+                emoji_id=EMOJI.menu_stats.emoji_id,
             )
         ],
         [
@@ -44,7 +49,7 @@ def main_menu(*, connected: bool = False, premium_enabled: bool = False) -> Inli
                 connect_label,
                 CB_CONNECT,
                 style=BtnStyle.SUCCESS if connected else BtnStyle.PRIMARY,
-                emoji_id=CustomEmoji.CONNECT,
+                emoji_id=EMOJI.menu_connect.emoji_id,
             )
         ],
     ]
@@ -52,10 +57,10 @@ def main_menu(*, connected: bool = False, premium_enabled: bool = False) -> Inli
         rows.append(
             [
                 btn(
-                    "💎 Premium",
+                    f"{EMOJI.menu_premium.fallback} Premium",
                     CB_PREMIUM,
                     style=BtnStyle.SUCCESS,
-                    emoji_id=CustomEmoji.PREMIUM,
+                    emoji_id=EMOJI.menu_premium.emoji_id,
                 )
             ]
         )
@@ -64,10 +69,10 @@ def main_menu(*, connected: bool = False, premium_enabled: bool = False) -> Inli
     rows.append(
         [
             btn(
-                "💎 Mening obunam",
+                f"{EMOJI.menu_my_sub.fallback} Mening obunam",
                 CB_MY_SUB,
                 style=BtnStyle.PRIMARY,
-                emoji_id=CustomEmoji.PREMIUM,
+                emoji_id=EMOJI.menu_my_sub.emoji_id,
             )
         ]
     )
@@ -78,9 +83,24 @@ def my_sub_menu() -> InlineKeyboardMarkup:
     """«Mening obunam» ekrani: tariflarga va menyuga qaytish."""
     return kb(
         [
-            [btn("💎 Tariflar", CB_PREMIUM, style=BtnStyle.SUCCESS, emoji_id=CustomEmoji.PREMIUM)],
-            [btn("🔙 Menyuga qaytish", CB_BACK_MENU, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)],
+            [btn(
+                f"{EMOJI.menu_premium.fallback} Tariflar",
+                CB_PREMIUM,
+                style=BtnStyle.SUCCESS,
+                emoji_id=EMOJI.menu_premium.emoji_id,
+            )],
+            [_back_btn()],
         ]
+    )
+
+
+def _back_btn():
+    """«Menyuga qaytish» tugmasi — emoji registrydan."""
+    return btn(
+        f"{EMOJI.menu_back.fallback} Menyuga qaytish",
+        CB_BACK_MENU,
+        style=BtnStyle.DANGER,
+        emoji_id=EMOJI.menu_back.emoji_id,
     )
 
 
@@ -98,14 +118,14 @@ def connect_menu(bot_username: str = "") -> InlineKeyboardMarkup:
     tg:// ni qabul qilsa.
     """
     settings_button = {
-        "text": "⚙️ Sozlamalarni ochish",
+        "text": f"{EMOJI.menu_settings.fallback} Sozlamalarni ochish",
         "url": "tg://settings/edit",
         "style": BtnStyle.SUCCESS,
     }
     return kb(
         [
             [InlineKeyboardButton(**settings_button)],
-            [btn("🔙 Menyuga qaytish", CB_BACK_MENU, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)],
+            [_back_btn()],
         ]
     )
 
@@ -122,12 +142,12 @@ async def premium_plans(db: Database) -> InlineKeyboardMarkup:
                 plan_button_label(p["title"], p["duration_days"], p["price"]),
                 f"{CB_PLAN}{p['id']}",
                 style=BtnStyle.SUCCESS,
-                emoji_id=CustomEmoji.PREMIUM,
+                emoji_id=EMOJI.menu_premium.emoji_id,
             )
         ]
         for p in plans
     ]
-    rows.append([btn("🔙 Menyuga qaytish", CB_BACK_MENU, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)])
+    rows.append([_back_btn()])
     return kb(rows)
 
 
@@ -135,11 +155,16 @@ def premium_checkout(plan_id: int) -> InlineKeyboardMarkup:
     """To'lov oynasi: tariflarga va menyuga qaytish (chek — foto sifatida)."""
     return kb(
         [
-            [btn("🔙 Tariflarga", CB_PREMIUM, style=BtnStyle.PRIMARY, emoji_id=CustomEmoji.BACK)],
-            [btn("🔙 Menyuga qaytish", CB_BACK_MENU, style=BtnStyle.DANGER)],
+            [btn(
+                f"{EMOJI.menu_back.fallback} Tariflarga",
+                CB_PREMIUM,
+                style=BtnStyle.PRIMARY,
+                emoji_id=EMOJI.menu_back.emoji_id,
+            )],
+            [_back_btn()],
         ]
     )
 
 
 def back_to_menu() -> InlineKeyboardMarkup:
-    return kb([[btn("🔙 Menyuga qaytish", CB_BACK_MENU, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)]])
+    return kb([[_back_btn()]])

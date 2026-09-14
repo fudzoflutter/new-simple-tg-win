@@ -12,30 +12,29 @@ oddiy emoji bilan qayta yuboriladi (app/handlers/user.py dagi fallback).
 
 from __future__ import annotations
 
-from app.config import settings
+from app.emoji_config import EMOJI
 from app.utils.formatting import esc, fmt_number
-from app.utils.ui import tg_e
 
 # ---------------------------------------------------------------------------
-# Xabarlar ICHIDAGI premium (custom) emoji – IDlar config.py / .env dan.
+# Xabarlar ICHIDAGI premium (custom) emoji – HAMMASI app/emoji_config.py da.
+# IDlarni O'SHA FAYLDA almashtiring — bu yerda faqat qisqa nomlar.
 # ---------------------------------------------------------------------------
-E_STATS = tg_e(settings.emoji_stats, "📊")
-E_USER = tg_e(settings.emoji_user, "👤")
-E_ID = tg_e(settings.emoji_idcard, "🆔")
-E_LINK = tg_e(settings.emoji_connect, "🔗")
-E_GEM = tg_e(settings.emoji_premium, "💎")
-E_INBOX = tg_e(settings.emoji_inbox, "📥")
-E_EDIT = tg_e(settings.emoji_edit, "✏️")
-E_TRASH = tg_e(settings.emoji_trash, "🗑")
-E_INFO = tg_e(settings.emoji_help, "ℹ️")
-E_CHAT = tg_e(settings.emoji_chat, "💬")
-E_CLOCK = tg_e(settings.emoji_clock, "🕒")
+E_STATS = EMOJI.stats
+E_USER = EMOJI.user
+E_ID = EMOJI.idcard
+E_LINK = EMOJI.link
+E_GEM = EMOJI.gem
+E_EDIT = EMOJI.edit
+E_TRASH = EMOJI.trash
+E_INFO = EMOJI.info_tag
+E_CHAT = EMOJI.chat
+E_CLOCK = EMOJI.clock
 
 # ---------------------------------------------------------------------------
 # /start – asosiy menyu (1–2-bandlar)
 # ---------------------------------------------------------------------------
 WELCOME = (
-    "👋 <b>Assalomu alaykum!</b>\n\n"
+    f"👋 <b>Assalomu alaykum!</b>\n\n"
     "Men sizning shaxsiy faoliyat-nazorat botingizman.\n"
     "Meni Telegram akkauntingizga ulang — yuborgan, tahrirlagan va "
     "o'chirgan xabarlaringizni, stiker, rasm va videolarni ham kuzatib boraman."
@@ -44,73 +43,29 @@ WELCOME = (
 MENU_HINT = "Quyidagi amallardan birini tanlang 👇"
 
 # /start bosilganda, foydalanuvchi banlangan bo'lsa.
-BANNED = "🚫 <b>Kirish cheklangan.</b>\nSizga bu botdan foydalanish taqiqlangan."
+BANNED = f"{EMOJI.ban.fallback} <b>Kirish cheklangan.</b>\nSizga bu botdan foydalanish taqiqlangan."
 
 # /start bosilganda, foydalanuvchi ALLAQACHON ulangan bo'lsa (2-band, yangi talab).
 ALREADY_CONNECTED = (
-    "🟢 <b>Siz allaqachon ulangansiz!</b>\n\n"
+    f"{EMOJI.online_dot.tag} <b>Siz allaqachon ulangansiz!</b>\n\n"
     "Bot akkauntingizga muvaffaqiyatli ulangan — kuzatuv ishlamoqda.\n"
     "Uzish uchun <i>Telegram Business → Chatbotlar</i> bo'limidan meni o'chirishingiz mumkin."
 )
 
 # Callback (alert) uchun — HTML ishlamaydi, oddiy matn.
-BAN_CALLBACK = "🚫 Kirish cheklangan."
-
-# -- Kirish tasdiqlash tizimi (yangi talab) --------------------------------
-# Yangi foydalanuvchi /start bosganda avtomatik 'pending' bo'ladi va admin
-# tasdiqlamaguncha hech qanday funksiya ochilmaydi.
-ACCESS_PENDING = (
-    "⏳ <b>So'rovingiz ko'rib chiqilmoqda</b>\n\n"
-    "Botdan foydalanish uchun adminning tasdig'i kerak.\n"
-    "Tasdiqlangach, shu yerga xabar keladi."
-)
-ACCESS_PENDING_CALLBACK = "⏳ So'rovingiz hali ko'rib chiqilmoqda."
-
-ACCESS_REJECTED = (
-    "❌ <b>Kirish rad etilgan.</b>\n\n"
-    "Sizning so'rovingiz admin tomonidan rad etilgan.\n"
-    "Savollar bo'lsa, admin bilan bog'laning."
-)
-ACCESS_REJECTED_CALLBACK = "❌ Kirishingiz rad etilgan."
-
-ACCESS_APPROVED_USER = (
-    "✅ <b>So'rovingiz tasdiqlandi!</b>\n\n"
-    "Endi botning barcha imkoniyatlaridan foydalanishingiz mumkin.\n"
-    "/start ni bosib menyuni oching."
-)
-
-ACCESS_REJECTED_NOTIFY = (
-    "❌ <b>Kirish so'rovingiz rad etildi.</b>\n\n"
-    "Botdan foydalanish imkoni berilmadi."
-)
-
-# Admin tomondagi matnlar:
-ADMIN_ACCESS_TITLE = (
-    "✅ <b>Kirish so'rovlari</b> ({page}/{pages}-sahifa)\n\n"
-    "So'rovni bosing — kartochka ochiladi."
-)
-ADMIN_ACCESS_EMPTY = "✅ Kutilayotgan kirish so'rovi yo'q."
-ADMIN_ACCESS_APPROVED_DONE = "✅ {name} tasdiqlandi va xabar berildi."
-ADMIN_ACCESS_REJECTED_DONE = "❌ {name} rad etildi."
-ADMIN_NEW_ACCESS_REQUEST = (
-    "🔔 <b>Yangi kirish so'rovi!</b>\n\n"
-    "{E_USER} Foydalanuvchi: {user}\n"
-    "{E_ID} ID: <code>{user_id}</code>\n"
-    "🔗 Username: {username}\n\n"
-    "Tasdiqlasangiz, foydalanuvchi botdan foydalana oladi:"
-)
+BAN_CALLBACK = f"{EMOJI.ban.fallback} Kirish cheklangan."
 
 # ---------------------------------------------------------------------------
 # "Ulanish" (1-band)
 # ---------------------------------------------------------------------------
 CONNECT_TITLE = (
-    "🔗 <b>Botni ulash</b>\n\n"
+    f"{EMOJI.connect_title.tag} <b>Botni ulash</b>\n\n"
     "Quyidagi bosqichlarni bajaring (~30 soniya):\n\n"
     "1️⃣ «⚙️ Sozlamalarni ochish» tugmasini bosing\n"
     "2️⃣ <b>Telegram Business</b> bo'limini oching\n"
     "3️⃣ <b>Chatbotlar</b> bandida\n"
     "4️⃣ <b>Bot qo'shish</b>ni tanlab, <b>@{bot_username}</b> ni tanlang\n\n"
-    "✅ Tayyor! Meni ulashingiz bilan shu yerga tasdiq xabari keladi — "
+    f"{EMOJI.ok.tag} Tayyor! Meni ulashingiz bilan shu yerga tasdiq xabari keladi — "
     "aloqa uzilsa ham darhol xabar beraman."
 )
 
@@ -124,7 +79,7 @@ STATS_BODY = (
     f"{E_ID} ID: <code>{{user_id}}</code>\n\n"
     f"{E_LINK} Ulanish: {{connection_line}}\n"
     f"{E_GEM} Premium: {{premium_line}}\n\n"
-    f"{E_INBOX} Yozib olingan xabarlar: <b>{{total}}</b>\n"
+    f"{EMOJI.inbox.tag} Yozib olingan xabarlar: <b>{{total}}</b>\n"
     f"{E_EDIT} Tahrirlar: <b>{{edits}}</b>\n"
     f"{E_TRASH} O'chirishlar: <b>{{deletes}}</b>"
 )
@@ -228,7 +183,7 @@ PREMIUM_REJECTED_USER = (
 # Ulanish haqidagi xabarlar (3-band)
 # ---------------------------------------------------------------------------
 BUSINESS_CONNECTED = (
-    "🟢 <b>Ulanish amalga oshdi!</b>\n\n"
+    f"{EMOJI.online_dot.tag} <b>Ulanish amalga oshdi!</b>\n\n"
     "Endi men sizning Telegram akkauntingizga ulanganman.\n\n"
     "Xabar faoliyatingiz (tahrirlash, o'chirish, stiker, rasm, video) endi "
     "shaxsiy hisobotlar bilan SHU chatga keladi — barcha ma'lumotlar faqat "
@@ -238,19 +193,19 @@ BUSINESS_CONNECTED = (
 )
 
 BUSINESS_DISCONNECTED = (
-    "🔴 <b>Ulanish uzildi!</b>\n\n"
+    f"{EMOJI.offline_dot.tag} <b>Ulanish uzildi!</b>\n\n"
     "Akkauntingiz bilan bog'lanish faol emas, kuzatuv to'xtadi.\n"
     "Qayta ulash uchun <i>Telegram Business → Chatbotlar</i> bo'limidan "
     "meni qayta ulang."
 )
 
 BUSINESS_ENABLED_AGAIN = (
-    "🟢 <b>Ulanish tiklandi!</b>\n\n"
+    f"{EMOJI.online_dot.tag} <b>Ulanish tiklandi!</b>\n\n"
     "Kuzatuv yana ishlayapti."
 )
 
 BUSINESS_DISABLED = (
-    "🟡 <b>Ulanish to'xtatildi.</b>\n\n"
+    f"{EMOJI.paused_dot.tag} <b>Ulanish to'xtatildi.</b>\n\n"
     "Bot akkauntingizga nisbatan huquqlarini yo'qotdi. Bu sizning "
     "xohishingiz bo'lmasa, chatbot sozlamalarini tekshiring."
 )
@@ -270,8 +225,8 @@ BUSINESS_DISABLED = (
 REPORT_EDIT = (
     f"{E_EDIT} <b>Xabar tahrirlandi</b>\n\n"
     f"{E_USER} Kim: {{who}}\n"
-    f"📱 Default: {{old}}\n"
-    f"📲 Edited: {{new}}"
+    f"{EMOJI.report_old.tag} Default: {{old}}\n"
+    f"{EMOJI.report_new.tag} Edited: {{new}}"
 )
 
 REPORT_DELETED_MEDIA = (
@@ -284,7 +239,7 @@ REPORT_DELETED_MEDIA = (
 REPORT_DELETED_TEXT = (
     f"{E_TRASH} <b>Xabar o'chirildi</b>\n\n"
     f"{E_USER} Kim: {{who}}\n"
-    f"📝 Asl matn: {{original}}"
+    f"{EMOJI.report_text.tag} Asl matn: {{original}}"
 )
 
 # Rasm/video/GIF/stiker o'chirilganda — SAQLANGAN MEDIA QAYTA YUBORILADI,
@@ -309,13 +264,13 @@ UNKNOWN_CHAT = "Noma'lum chat"
 # Admin panel (5-band)
 # ---------------------------------------------------------------------------
 ADMIN_TITLE = (
-    "🛡 <b>Admin panel</b>\n\n"
-    "👥 Foydalanuvchilar: <b>{users}</b>\n"
-    "🟢 Hozir onlayn: <b>{online}</b>\n"
-    "💎 Premium: <b>{premium}</b>\n"
-    "👁 Premium bo'limi: {premium_state}\n"
-    "🔗 Ulangan: <b>{connected}</b>\n"
-    "⛔️ Banlangan: <b>{banned}</b>"
+    f"{EMOJI.admin_panel.tag} <b>Admin panel</b>\n\n"
+    f"{EMOJI.admin_users.tag} Foydalanuvchilar: <b>{{users}}</b>\n"
+    f"{EMOJI.admin_online.tag} Hozir onlayn: <b>{{online}}</b>\n"
+    f"{EMOJI.admin_premium.tag} Premium: <b>{{premium}}</b>\n"
+    f"{EMOJI.admin_premium_state.tag} Premium bo'limi: {{premium_state}}\n"
+    f"{EMOJI.admin_connected.tag} Ulangan: <b>{{connected}}</b>\n"
+    f"{EMOJI.admin_banned.tag} Banlangan: <b>{{banned}}</b>"
 )
 
 ADMIN_DENIED = "🛡 Bu bo'lim faqat admin uchun."

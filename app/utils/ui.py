@@ -22,23 +22,23 @@ from typing import Optional, Sequence
 
 from aiogram.types import CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
 
-from app.config import settings
+from app.emoji_config import EMOJI, tg_e  # noqa: F401  (tg_e — eski importlar uchun)
 
 
 class CustomEmoji:
-    """IDs of the custom (premium) emojis used across the bot.
+    """Tugma ikonkalari — HAMMASI ``app/emoji_config.py`` dan olinadi.
 
-    Replace any ID with one from your own premium emoji pack — everything
-    updates automatically because keyboards reference these constants.
+    Emoji IDlarini shu faylda emas, ``emoji_config.py`` da almashtiring:
+    bu klass faqat ko'prik (delegation).
     """
 
-    STATS = settings.emoji_stats  # 📊 chart
-    PREMIUM = settings.emoji_premium  # 💎 gem
-    CONNECT = settings.emoji_connect  # 🔗 link
-    ADMIN = settings.emoji_admins  # 🛡 shield
-    HELP = settings.emoji_help  # ℹ️ info
-    BROADCAST = settings.emoji_broadcast  # 📣 megaphone
-    BACK = settings.emoji_back  # ↩️ back arrow
+    STATS = EMOJI.menu_stats.emoji_id  # 📊 chart
+    PREMIUM = EMOJI.menu_premium.emoji_id  # 💎 gem
+    CONNECT = EMOJI.menu_connect.emoji_id  # 🔗 link
+    ADMIN = EMOJI.btn_users.emoji_id  # 🛡 shield
+    HELP = EMOJI.info.emoji_id  # ℹ️ info
+    BROADCAST = EMOJI.btn_broadcast.emoji_id  # 📣 megaphone
+    BACK = EMOJI.menu_back.emoji_id  # ↩️ back arrow
 
     # Cheap "icon" fallbacks used inside message *text* (always visible).
     GLYPH_STATS = "📊"
@@ -106,15 +106,3 @@ def btn(
 def kb(rows: Sequence[Sequence[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
     """Build an InlineKeyboardMarkup from rows of buttons."""
     return InlineKeyboardMarkup(inline_keyboard=[list(row) for row in rows])
-
-
-def tg_e(emoji_id: Optional[str], fallback: str) -> str:
-    """Premium emoji for use INSIDE message text.
-
-    Returns an <tg-emoji> tag when an ID is configured; Telegram clients
-    that support it render the animated (premium) emoji instead of the
-    plain glyph.  When the ID is empty the fallback glyph is returned.
-    """
-    if not emoji_id:
-        return fallback
-    return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'

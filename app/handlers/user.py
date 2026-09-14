@@ -1,8 +1,8 @@
 """
 Foydalanuvchi tomonidagi handlerlar (1–3-bandlar va 5-bandning foydalanuvchi
-qismi) + YANGI kirish tasdiqlash oqimi.
+qismi).
 
-* /start              – tasdiqlangan bo'lsa menyu, aks holda "kutilmoqda"
+* /start              – asosiy menyu (kirish ochiq; cheklash faqat ban)
 * Statistika          – shaxsiy statistika + "qanday ishlaydi" izohi
 * Ulanish             – tg://settings/edit orqali sozlamalarga yo'naltirish
 * Premium             – tariflar, nusxalanadigan karta, chek yuklash
@@ -10,7 +10,6 @@ qismi) + YANGI kirish tasdiqlash oqimi.
 
 from __future__ import annotations
 
-import time
 from datetime import datetime
 
 from aiogram import F, Router
@@ -40,13 +39,6 @@ from app.utils.texts import (
 
 router = Router(name="user")
 
-# /start dan keyin foydalanuvchi "yangi" hisoblanadigan vaqt (sek).
-NEW_REQUEST_WINDOW_SECONDS = 5
-
-# Egaga eslatma yuborish orasidagi eng kam vaqt (bir foydalanuvchi uchun).
-ADMIN_REMINDER_COOLDOWN = 60.0
-_last_admin_reminder: dict[int, float] = {}
-
 
 async def _premium_enabled() -> bool:
     """Premium bo'limi hozir hammaga ochiqmi? (admin panelda yoqiladi)"""
@@ -58,48 +50,19 @@ async def _premium_enabled() -> bool:
 # ---------------------------------------------------------------------------
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext) -> None:
-    """Kirish nuqtasi: tasdiqlangan — menyu; pending/rejected — ogohlantirish."""
+    """Kirish nuqtasi: banlangan bo'lmasa — to'g'ridan-to'g'ri menyu."""
     await state.clear()
-
-    # Ega (admin) uchun har doim to'g'ridan-to'g'ri menyu: u hech qachon
-    # o'z so'rovini tasdiqlashi kerak bo'lmaydi (bug fix).
-    if settings.admin_id == message.from_user.id:
-        await db.set_access(message.from_user.id, "approved", message.from_user.id)
-        await message.answer(
-            f"{texts.WELCOME}\n\n{texts.MENU_HINT}",
-            reply_markup=user_kb.main_menu(
-                connected=False,
-                premium_enabled=await _premium_enabled(),
-            ),
-            disable_web_page_preview=True,
-        )
-        return
 
     row = await db.get_user(message.from_user.id)
 
-    status = (row or {}).get("access_status") or "pending"
     if (row or {}).get("is_banned"):
         await message.answer(texts.BANNED)
         return
-    if status == "rejected":
-        await message.answer(texts.ACCESS_REJECTED)
-        return
-    if status == "pending":
-        # TASDIQLANMAGAN foydalanuvchi FAQAT 'kutib turish' xabarini ko'radi —
-        # menyu/tugmalar YO'Q (talab: panelga ruxsat so'rovi keladi,
-        # foydalanuvchi hozir esa hech narsani boshqara olmaydi).
-        # Admin TASDIQLAGACH: unga bu chatga avtomatik tasdiq + ISHLAYDIGAN
-        # menyu yuboriladi (admin_panel.py, _decide_access) — /start ni
-        # qaytadan bosish shart emas.
-        await message.answer(texts.ACCESS_PENDING)
-        await _notify_admin_about_request(message)
-        return
 
+    # Foydalanuvchi — menyuni ochamiz (ulanish holati bilan).
     conns = await db.connections_for_user(message.from_user.id)
     is_connected = any(c.get("is_enabled") for c in conns)
     if is_connected:
-        # 2-band (yangi talab): "Ulanish" so'rovi o'rniga ALLAQACHON
-        # ULANGANLIK tasdigi.
         await message.answer(
             texts.ALREADY_CONNECTED,
             reply_markup=user_kb.main_menu(
@@ -110,7 +73,6 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         )
         return
 
-    # Tasdiqlangan, hali ulanmagan foydalanuvchi — menyuni ochamiz.
     await message.answer(
         f"{texts.WELCOME}\n\n{texts.MENU_HINT}",
         reply_markup=user_kb.main_menu(
@@ -119,57 +81,6 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         ),
         disable_web_page_preview=True,
     )
-
-
-async def _notify_admin_about_request(message: Message) -> None:
-    """Egaga yangi kirish so'rovi haqida xabar.
-
-    Har bir PENDING foydalanuvchining /start i egaga eslatma yuboradi
-    (yangi talab: so'rovlar panelda paydo bo'lishi KAFOLATLANGAN).
-    Bir daqiqada ko'p marta /start bosilsa, spam bo'lmasligi uchun oxirgi
-    eslatmadan keyin kamida 60 sekund o'tishi kerak.
-    """
-    # Ega o'ziga o'zi xabar yubormasin (ikki marta himoya).
-    if message.from_user.id == settings.admin_id:
-        return
-
-    now = time.monotonic()
-    last = _last_admin_reminder.get(message.from_user.id, 0.0)
-    if now - last < ADMIN_REMINDER_COOLDOWN:
-        return
-    _last_admin_reminder[message.from_user.id] = now
-
-    await db.touch_user(message.from_user.id)
-    try:
-        await message.bot.send_message(
-            settings.admin_id,
-            texts.ADMIN_NEW_ACCESS_REQUEST.format(
-                E_USER=texts.E_USER,
-                E_ID=texts.E_ID,
-                user=mention_by_id(
-                    message.from_user.id,
-                    message.from_user.first_name or "User",
-                    message.from_user.username,
-                ),
-                user_id=message.from_user.id,
-                username=f"@{message.from_user.username}" if message.from_user.username else "—",
-            ),
-            parse_mode="HTML",
-            reply_markup=admin_kb.access_decision(message.from_user.id),
-        )
-    except Exception:  # noqa: BLE001
-        pass
-    # Necha kutilayotgan so'rov borligini ham egaga eslatamiz.
-    pending = await db.count_pending_access()
-    try:
-        await message.bot.send_message(
-            settings.admin_id,
-            f"✅ Kutilayotgan kirish so'rovlari: <b>{pending}</b>. "
-            "Panelda «✅ Kirish so'rovlari» bo'limida ko'rinadi (/admin).",
-            parse_mode="HTML",
-        )
-    except Exception:  # noqa: BLE001
-        pass
 
 
 @router.callback_query(F.data == user_kb.CB_BACK_MENU)

@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from aiogram.types import InlineKeyboardMarkup
 
-from app.utils.ui import BtnStyle, CustomEmoji, btn, kb
+from app.emoji_config import EMOJI
+from app.utils.ui import BtnStyle, btn, kb
 
 # Callback prefikslari.
 CB_PANEL = "adm:panel"
@@ -36,11 +37,6 @@ CB_BROADCAST_SEND = "adm:bcast:go"
 CB_CANCEL = "adm:cancel"
 CB_BACK_MENU = "user:menu"  # foydalanuvchi tomoni bilan umumiy
 
-# -- Kirish so'rovlarini tasdiqlash (yangi talab) -----------------------------
-CB_ACCESS = "adm:access"
-CB_ACCESS_OK = "adm:access:ok:"
-CB_ACCESS_NO = "adm:access:no:"
-
 # -- Premium bo'limini yoqish/o'chirish (yangi talab) -------------------------
 CB_PREMIUM_TOGGLE = "adm:premium:toggle"
 
@@ -48,70 +44,70 @@ PAGE_SIZE = 5
 
 
 def panel(
-    pending_access: int = 0,
     pending_payments: int = 0,
     premium_enabled: bool = False,
 ) -> InlineKeyboardMarkup:
-    """Admin panel: kirish so'rovlari, foydalanuvchilar, tariflar, to'lovlar
-    va Premium bo'limini yoqish/o'chirish tugmasi (yangi talab)."""
-    access_label = f"✅ Kirish so'rovlari ({pending_access})" if pending_access else "✅ Kirish so'rovlari"
+    """Admin panel: foydalanuvchilar, onlayn, tariflar, to'lovlar va
+    Premium bo'limini yoqish/o'chirish tugmasi."""
     pays_label = f"💳 To'lovlar ({pending_payments})" if pending_payments else "💳 To'lovlar"
     return kb(
         [
-            [btn(access_label, CB_ACCESS, style=BtnStyle.SUCCESS, emoji_id=CustomEmoji.ADMIN)],
             [
-                btn("👥 Foydalanuvchilar", CB_USERS, style=BtnStyle.PRIMARY, emoji_id=CustomEmoji.ADMIN),
-                btn("🟢 Onlayn", CB_ONLINE, style=BtnStyle.SUCCESS),
-            ],
-            [
-                btn("🗓 Premium tariflar", CB_PLANS, style=BtnStyle.PRIMARY, emoji_id=CustomEmoji.PREMIUM),
-                btn(pays_label, CB_PAYMENTS, style=BtnStyle.SUCCESS),
-            ],
-            [
-                btn("📣 Ommaviy xabar", CB_BROADCAST, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BROADCAST)
+                btn(
+                    f"{EMOJI.btn_users.fallback} Foydalanuvchilar",
+                    CB_USERS,
+                    style=BtnStyle.PRIMARY,
+                    emoji_id=EMOJI.btn_users.emoji_id,
+                ),
+                btn(
+                    f"{EMOJI.btn_online.fallback} Onlayn",
+                    CB_ONLINE,
+                    style=BtnStyle.SUCCESS,
+                    emoji_id=EMOJI.btn_online.emoji_id,
+                ),
             ],
             [
                 btn(
-                    "💎 Premium bo'limi: YOQISH" if not premium_enabled else "💎 Premium bo'limi: O'CHIRISH",
-                    CB_PREMIUM_TOGGLE,
-                    style=BtnStyle.SUCCESS if not premium_enabled else BtnStyle.DANGER,
-                    emoji_id=CustomEmoji.PREMIUM,
+                    f"{EMOJI.btn_plans.fallback} Premium tariflar",
+                    CB_PLANS,
+                    style=BtnStyle.PRIMARY,
+                    emoji_id=EMOJI.btn_plans.emoji_id,
+                ),
+                btn(
+                    pays_label,
+                    CB_PAYMENTS,
+                    style=BtnStyle.SUCCESS,
+                    emoji_id=EMOJI.btn_payments.emoji_id,
+                ),
+            ],
+            [
+                btn(
+                    f"{EMOJI.btn_broadcast.fallback} Ommaviy xabar",
+                    CB_BROADCAST,
+                    style=BtnStyle.DANGER,
+                    emoji_id=EMOJI.btn_broadcast.emoji_id,
                 )
             ],
-            [btn("🔙 Menyuga qaytish", CB_BACK_MENU, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)],
-        ]
-    )
-
-
-def access_buttons(pairs: list[tuple[str, int]]) -> list[list]:
-    """Har bir so'rov uchun bitta qator-tugma -> kartochka ochiladi."""
-    return [[btn(label, f"{CB_USER}{user_id}") for label, user_id in [pair]] for pair in pairs]
-
-
-def access_pager(page: int, pages: int, user_rows: list[list] | None = None) -> InlineKeyboardMarkup:
-    """Kirish so'rovlari ro'yxati + sahifalash."""
-    rows: list = list(user_rows or [])
-    nav: list = []
-    if page > 1:
-        nav.append(btn("◀️", f"{CB_ACCESS}{page - 1}"))
-    if pages > 1:
-        nav.append(btn(f"{page}/{pages}", CB_ACCESS, style=BtnStyle.PRIMARY))
-    if page < pages:
-        nav.append(btn("▶️", f"{CB_ACCESS}{page + 1}"))
-    if nav:
-        rows.append(nav)
-    rows.append([btn("🔙 Panel", CB_PANEL, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)])
-    return kb(rows)
-
-
-def access_decision(user_id: int) -> InlineKeyboardMarkup:
-    """So'rov kartochkasidagi Tasdiqlash / Rad etish tugmalari."""
-    return kb(
-        [
             [
-                btn("✅ Tasdiqlash", f"{CB_ACCESS_OK}{user_id}", style=BtnStyle.SUCCESS),
-                btn("❌ Rad etish", f"{CB_ACCESS_NO}{user_id}", style=BtnStyle.DANGER),
-            ]
+                btn(
+                    (
+                        f"{EMOJI.btn_premium_toggle.fallback} Premium bo'limi: YOQISH"
+                        if not premium_enabled
+                        else f"{EMOJI.btn_premium_toggle.fallback} Premium bo'limi: O'CHIRISH"
+                    ),
+                    CB_PREMIUM_TOGGLE,
+                    style=BtnStyle.SUCCESS if not premium_enabled else BtnStyle.DANGER,
+                    emoji_id=EMOJI.btn_premium_toggle.emoji_id,
+                )
+            ],
+            [
+                btn(
+                    f"{EMOJI.menu_back.fallback} Menyuga qaytish",
+                    CB_BACK_MENU,
+                    style=BtnStyle.DANGER,
+                    emoji_id=EMOJI.menu_back.emoji_id,
+                )
+            ],
         ]
     )
 
@@ -159,19 +155,19 @@ def user_card(user_id: int, banned: bool, premium_active: bool = False) -> Inlin
         rows.append([btn("✅ Bandan chiqarish", f"{CB_USER_UNBAN}{user_id}", style=BtnStyle.SUCCESS)])
     else:
         rows.append([btn("⛔️ Cheklash", f"{CB_USER_BAN}{user_id}", style=BtnStyle.DANGER)])
-    rows.append([btn("🔙 Ro'yxatga", CB_USERS, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)])
+    rows.append([btn("🔙 Ro'yxatga", CB_USERS, style=BtnStyle.DANGER, emoji_id=EMOJI.menu_back.emoji_id)])
     return kb(rows)
 
 
 def online_list() -> InlineKeyboardMarkup:
-    return kb([[btn("🔙 Panel", CB_PANEL, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)]])
+    return kb([[btn("🔙 Panel", CB_PANEL, style=BtnStyle.DANGER, emoji_id=EMOJI.menu_back.emoji_id)]])
 
 
 def plans_menu() -> InlineKeyboardMarkup:
     return kb(
         [
-            [btn("➕ Tarif yaratish", CB_PLAN_ADD, style=BtnStyle.SUCCESS, emoji_id=CustomEmoji.PREMIUM)],
-            [btn("🔙 Panel", CB_PANEL, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)],
+            [btn("➕ Tarif yaratish", CB_PLAN_ADD, style=BtnStyle.SUCCESS, emoji_id=EMOJI.menu_premium.emoji_id)],
+            [btn("🔙 Panel", CB_PANEL, style=BtnStyle.DANGER, emoji_id=EMOJI.menu_back.emoji_id)],
         ]
     )
 
@@ -181,8 +177,8 @@ def plans_menu_with(plan_rows: list[list]) -> InlineKeyboardMarkup:
     return kb(
         list(plan_rows)
         + [
-            [btn("➕ Tarif yaratish", CB_PLAN_ADD, style=BtnStyle.SUCCESS, emoji_id=CustomEmoji.PREMIUM)],
-            [btn("🔙 Panel", CB_PANEL, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)],
+            [btn("➕ Tarif yaratish", CB_PLAN_ADD, style=BtnStyle.SUCCESS, emoji_id=EMOJI.menu_premium.emoji_id)],
+            [btn("🔙 Panel", CB_PANEL, style=BtnStyle.DANGER, emoji_id=EMOJI.menu_back.emoji_id)],
         ]
     )
 
@@ -196,7 +192,7 @@ def plan_row(plan_id: int) -> InlineKeyboardMarkup:
                 btn("👁 Yashirish / ko'rsatish", f"{CB_PLAN_TOGGLE}{plan_id}", style=BtnStyle.PRIMARY),
                 btn("🗑 O'chirish", f"{CB_PLAN_DELETE}{plan_id}", style=BtnStyle.DANGER),
             ],
-            [btn("🔙 Barcha tariflar", CB_PLANS, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)],
+            [btn("🔙 Barcha tariflar", CB_PLANS, style=BtnStyle.DANGER, emoji_id=EMOJI.menu_back.emoji_id)],
         ]
     )
 
@@ -210,7 +206,7 @@ def plan_edit_menu(plan_id: int) -> InlineKeyboardMarkup:
             [btn("💰 Narx", f"{CB_PLAN_EDIT}{plan_id}:price", style=BtnStyle.PRIMARY),
              btn("📝 Tavsif", f"{CB_PLAN_EDIT}{plan_id}:desc", style=BtnStyle.PRIMARY)],
             [btn("🔙 Tarifga", f"{CB_PLAN_VIEW}{plan_id}", style=BtnStyle.SUCCESS)],
-            [btn("🔙 Barcha tariflar", CB_PLANS, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)],
+            [btn("🔙 Barcha tariflar", CB_PLANS, style=BtnStyle.DANGER, emoji_id=EMOJI.menu_back.emoji_id)],
         ]
     )
 
@@ -227,7 +223,7 @@ def plan_delete_confirm(plan_id: int) -> InlineKeyboardMarkup:
 
 
 def payments_menu() -> InlineKeyboardMarkup:
-    return kb([[btn("🔙 Panel", CB_PANEL, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)]])
+    return kb([[btn("🔙 Panel", CB_PANEL, style=BtnStyle.DANGER, emoji_id=EMOJI.menu_back.emoji_id)]])
 
 
 def payment_decision(payment_id: int) -> InlineKeyboardMarkup:
@@ -254,4 +250,4 @@ def broadcast_confirm() -> InlineKeyboardMarkup:
 
 
 def cancel_to_panel() -> InlineKeyboardMarkup:
-    return kb([[btn("🔙 Bekor qilish", CB_CANCEL, style=BtnStyle.DANGER, emoji_id=CustomEmoji.BACK)]])
+    return kb([[btn("🔙 Bekor qilish", CB_CANCEL, style=BtnStyle.DANGER, emoji_id=EMOJI.menu_back.emoji_id)]])

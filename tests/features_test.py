@@ -9,10 +9,11 @@ Covers (no Telegram network):
 
 PART A — Premium plans: create -> EDIT every field -> hide/show -> delete
 PART B — Subscriptions: grant (extend) -> user-visible deadline -> remove;
-         access requests: pending -> panel list -> approve;
+         access is OPEN for everyone (approval feature removed):
+         a fresh user is 'approved' right away;
          connection state: connect -> disconnect -> reconnect timestamps
-PART C — AccessGuardMiddleware: /start now REACHES handlers for pending
-         users (the access-request bug fix); other commands stay blocked.
+PART C — AccessGuardMiddleware: only banned users are blocked now;
+         everyone else (and /start) passes through.
 """
 
 from __future__ import annotations
@@ -74,14 +75,10 @@ async def part_b_users() -> None:
         await db.set_premium(9001, None)
         assert (await db.get_user(9001))["premium_until"] is None
 
-        # -- access requests: pending -> panel list -> approve ----------------
+        # -- kirish ochiq (tasdiqlash tizimi olib tashlandi) -----------------
         row = await db.get_user(9001)
-        assert row["access_status"] == "pending"
-        pending = await db.pending_access_users()
-        assert any(u["user_id"] == 9001 for u in pending), pending
-        await db.set_access(9001, "approved", 111111111)
-        assert not any(
-            u["user_id"] == 9001 for u in await db.pending_access_users()
+        assert row["access_status"] == "approved", (
+            "yangi foydalanuvchi darhol approved bo'lishi kerak"
         )
 
         # -- connection lifecycle ---------------------------------------------
@@ -100,7 +97,7 @@ async def part_b_users() -> None:
 
 
 async def part_c_middleware() -> None:
-    """AccessGuardMiddleware: /start passes through, other commands don't."""
+    """AccessGuardMiddleware: faqat BANLANGAN foydalanuvchi to'siladi."""
     from datetime import datetime
 
     from aiogram.types import Chat, Message, User
@@ -123,8 +120,8 @@ async def part_c_middleware() -> None:
         async def get_user(self, user_id: int) -> dict:
             return {
                 "user_id": user_id,
-                "access_status": "pending",
-                "is_banned": False,
+                "access_status": "approved",  # endi hamma approved
+                "is_banned": user_id == 9002,  # faqat 9002 banlangan
             }
 
     original = middlewares.db
@@ -137,83 +134,38 @@ async def part_c_middleware() -> None:
 
     mw._reject = fake_reject  # type: ignore[method-assign]
     try:
-        # /start from a PENDING user must reach the handler now (bug fix).
+        # Oddiy (banlanmagan) foydalanuvchi — har qanday so'rov o'tadi.
         called = []
 
         async def handler(event, data):
             called.append(event)
 
-        start = make_message(9001, "/start")
-        await mw(handler, start, {"event_from_user": start.from_user})
-        assert called, "/start must pass through the guard for pending users"
+        normal = make_message(9001, "/settings")
+        await mw(handler, normal, {"event_from_user": normal.from_user})
+        assert called, "unbanned user must pass through the guard"
+        assert not rejects
 
-        # Any other command must stay blocked for a pending user.
+        # Banlangan foydalanuvchi — to'siladi.
         blocked_called = []
 
         async def blocked_handler(event, data):
             blocked_called.append(event)
 
-        other = make_message(9001, "/settings")
+        banned = make_message(9002, "/start")
         await mw(
-            blocked_handler, other, {"event_from_user": other.from_user}
+            blocked_handler, banned, {"event_from_user": banned.from_user}
         )
-        assert not blocked_called, "non-start command must stay blocked"
-        assert rejects, "blocked user must still get the 'pending' notice"
-        print("PART C (guard passthrough) PASSED ✅")
+        assert not blocked_called, "banned user must be blocked"
+        assert rejects, "banned user must get the ban notice"
+        print("PART C (guard ban-only) PASSED ✅")
     finally:
         middlewares.db = original
-
-
-async def part_d_callback_routing() -> None:
-    """The access-requests list filter must NOT swallow ✅/❌ callbacks.
-
-    Bug: F.data.startswith('adm:access') matched 'adm:access:ok:<id>' and
-    'adm:access:no:<id>' too, so pressing Approve/Reject re-opened the
-    list and the request was never approved.
-    """
-    import re
-
-    from app.keyboards import admin_kb
-
-    # The pattern used by show_access_requests (keep in sync!).
-    pattern = r"^adm:access(\d+|)$"
-
-    must_match = ["adm:access", "adm:access1", "adm:access12"]
-    must_not_match = [
-        admin_kb.CB_ACCESS_OK + "9001",   # ✅ Tasdiqlash
-        admin_kb.CB_ACCESS_NO + "9001",   # ❌ Rad etish
-        "adm:accessX",
-        "adm:access:ok:9001",
-    ]
-    for data in must_match:
-        assert re.match(pattern, data), f"{data} must open the requests list"
-    for data in must_not_match:
-        assert not re.match(pattern, data), (
-            f"{data} must NOT be caught by the list filter (approve/reject "
-            "callbacks would be swallowed)"
-        )
-
-    # Registration-order sanity: in admin_panel.py the ✅/❌ handlers must
-    # appear AFTER the list handler but with their own startswith filters.
-    import inspect
-
-    from app.handlers import admin_panel
-
-    src = inspect.getsource(admin_panel)
-    list_pos = src.index("regexp")
-    ok_pos = src.index("CB_ACCESS_OK")
-    no_pos = src.index("CB_ACCESS_NO")
-    assert list_pos < ok_pos < no_pos or list_pos < no_pos < ok_pos, (
-        "list handler must come before decision handlers"
-    )
-    print("PART D (callback routing) PASSED ✅")
 
 
 async def main() -> None:
     await part_a_plans()
     await part_b_users()
     await part_c_middleware()
-    await part_d_callback_routing()
     print("ALL FEATURE TESTS PASSED ✅")
 
 

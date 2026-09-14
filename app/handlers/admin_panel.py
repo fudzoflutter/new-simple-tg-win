@@ -1,5 +1,5 @@
 """
-Admin handlerlari – panel, statistika, kirish so'rovlari, foydalanuvchilar.
+Admin handlerlari – panel, statistika va foydalanuvchilarni boshqarish.
 
 Ushbu handlerlarga faqat egasi (ADMIN_ID) yoki DBda admin deb belgilanganlar
 kiradi: filtr main.py da routerga ulanadi (:class:`app.filters.IsAdmin`).
@@ -17,7 +17,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from app.config import settings
 from app.database import db, parse_dt
-from app.keyboards import admin_kb, user_kb
+from app.keyboards import admin_kb
 from app.states import AdminGrant
 from app.utils import texts
 from app.utils.formatting import esc, fmt_date, fmt_datetime
@@ -46,9 +46,8 @@ async def show_panel(cb: CallbackQuery, state: FSMContext) -> None:
 
 
 async def _panel_kb() -> InlineKeyboardMarkup:
-    """Panel klaviaturasi — so'rov/to'lov sonlari + Premium holati bilan."""
+    """Panel klaviaturasi — to'lovlar soni + Premium holati bilan."""
     return admin_kb.panel(
-        pending_access=await db.count_pending_access(),
         pending_payments=len(await db.pending_payments()),
         premium_enabled=await premium_enabled(),
     )
@@ -92,7 +91,7 @@ async def toggle_premium(cb: CallbackQuery) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Kirish so'rovlari navbati (yangi talab)
+# Foydalanuvchilar ro'yxati uchun umumiy yordamchilar
 # ---------------------------------------------------------------------------
 def _user_line(row: dict) -> str:
     """Ro'yxatdagi bitta qator: 🟢/⚪️ Ism (@username) — id."""
@@ -108,139 +107,6 @@ def _is_online(row: dict) -> bool:
     if not last:
         return False
     return (datetime.now() - last).total_seconds() < ONLINE_WINDOW_SECONDS
-
-
-@router.callback_query(F.data.regexp(r"^adm:access(\d+|)$"))
-async def show_access_requests(cb: CallbackQuery) -> None:
-    """'adm:access' yoki 'adm:access:<page>' — kutilayotgan so'rovlar.
-
-    MUHIM (bug fix): avvalgi `startswith(CB_ACCESS)` filtri shu handlerga
-    'adm:access:ok:<id>' / 'adm:access:no:<id>' (Tasdiqlash/Rad etish)
-    callbacklarini HAM tutib qo'yardi — shu sababli ✅ bosilganda
-    so'rov TASDIQLANMASDI, ro'yxat qayta ochilardi.  Regexp aniq
-    'adm:access' yoki 'adm:access:<page>' formatlariga mos keladi.
-    """
-    suffix = cb.data.removeprefix(admin_kb.CB_ACCESS)
-    page = int(suffix) if suffix.isdigit() and int(suffix) > 0 else 1
-
-    rows = await db.pending_access_users()
-    if not rows:
-        await cb.message.edit_text(
-            texts.ADMIN_ACCESS_EMPTY, reply_markup=admin_kb.online_list()
-        )
-        await cb.answer()
-        return
-
-    pages = max(1, (len(rows) + admin_kb.PAGE_SIZE - 1) // admin_kb.PAGE_SIZE)
-    page = min(page, pages)
-    chunk = rows[(page - 1) * admin_kb.PAGE_SIZE : page * admin_kb.PAGE_SIZE]
-
-    text = texts.ADMIN_ACCESS_TITLE.format(page=page, pages=pages) + "\n\n" + "\n".join(
-        _user_line(r) for r in chunk
-    )
-    buttons = admin_kb.access_buttons(
-        [(r.get("first_name") or r.get("username") or str(r["user_id"]), r["user_id"]) for r in chunk]
-    )
-    await cb.message.edit_text(
-        text, reply_markup=admin_kb.access_pager(page, pages, buttons)
-    )
-    await cb.answer()
-
-
-async def _render_access_card(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
-    """So'rov kartochkasi: foydalanuvchi ma'lumoti + Tasdiqlash/Rad etish."""
-    row = await db.get_user(user_id)
-    if row is None:
-        return texts.ADMIN_USER_NOT_FOUND, admin_kb.online_list()
-
-    created = fmt_datetime(parse_dt(row.get("created_at")))
-    text = (
-        f"{texts.E_USER} <b>{esc(row.get('first_name') or str(user_id))}</b>\n\n"
-        f"{texts.E_ID} ID: <code>{user_id}</code>\n"
-        f"🔗 Username: {'@' + row['username'] if row.get('username') else '—'}\n"
-        f"📅 So'rov vaqti: {created}\n\n"
-        "Bu foydalanuvchiga botdan foydalanishga ruxsat berasizmi?"
-    )
-    return text, admin_kb.access_decision(user_id)
-
-
-@router.callback_query(F.data.startswith(admin_kb.CB_ACCESS_OK))
-async def approve_access(cb: CallbackQuery) -> None:
-    await _decide_access(cb, approved=True)
-
-
-@router.callback_query(F.data.startswith(admin_kb.CB_ACCESS_NO))
-async def reject_access(cb: CallbackQuery) -> None:
-    await _decide_access(cb, approved=False)
-
-
-async def _decide_access(cb: CallbackQuery, *, approved: bool) -> None:
-    prefix = admin_kb.CB_ACCESS_OK if approved else admin_kb.CB_ACCESS_NO
-    raw = cb.data.removeprefix(prefix)
-    if not raw.isdigit():
-        await cb.answer(texts.UNKNOWN_ACTION, show_alert=True)
-        return
-    user_id = int(raw)
-    row = await db.get_user(user_id)
-    if row is None:
-        # TASHXIS: tugmadagi id topilmadi. Negativa: 1) foydalanuvchi bazadan
-        # o'chirilgan (masalan boshqa joyda tozalangan), 2) tugma ESKI nusxa
-        # xabardan qolgan (restart/redeploy ma'lumotlari yangilangan).
-        logger.warning(
-            "Access decision: user_id=%s NOT FOUND in DB (callback=%s)",
-            user_id, cb.data,
-        )
-        await cb.answer(texts.ADMIN_USER_NOT_FOUND, show_alert=True)
-        return
-
-    await db.set_access(
-        user_id, "approved" if approved else "rejected", cb.from_user.id
-    )
-    logger.info(
-        "Access decision: user_id=%s -> %s (by %s)",
-        user_id, "approved" if approved else "rejected", cb.from_user.id,
-    )
-
-    # Foydalanuvchiga qaror haqida xabar berish.
-    try:
-        if approved:
-            # 1) Tasdiq matni...
-            await cb.bot.send_message(
-                user_id,
-                texts.ACCESS_APPROVED_USER,
-                parse_mode="HTML",
-            )
-            # 2) ...va DARHOL ishlaydigan asosiy menyu (eng muhim talab):
-            #    foydalanuvchi /start ni qaytadan bosishi shart emas.
-            await cb.bot.send_message(
-                user_id,
-                f"{texts.WELCOME}\n\n{texts.MENU_HINT}",
-                reply_markup=user_kb.main_menu(
-                    connected=False,
-                    premium_enabled=await premium_enabled(),
-                ),
-                disable_web_page_preview=True,
-            )
-        else:
-            await cb.bot.send_message(
-                user_id,
-                texts.ACCESS_REJECTED_NOTIFY,
-                parse_mode="HTML",
-            )
-    except Exception:  # noqa: BLE001
-        pass
-
-    name = esc(row.get("first_name") or str(user_id))
-    done = (
-        texts.ADMIN_ACCESS_APPROVED_DONE if approved else texts.ADMIN_ACCESS_REJECTED_DONE
-    )
-    await cb.answer(done.format(name=name), show_alert=True)
-
-    # Kartochkani yangilash — tugmalar yo'qoladi.
-    try:
-        await cb.message.edit_reply_markup(reply_markup=None)
-    except Exception:  # noqa: BLE001
-        pass
 
 
 # ---------------------------------------------------------------------------

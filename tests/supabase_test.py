@@ -80,16 +80,11 @@ async def run_crud_suite(backend_name: str) -> None:
         await db.upsert_user(TEST_USER, "parityuser", "Parity", None)
         row = await db.get_user(TEST_USER)
         assert row is not None, "upsert_user did not insert"
-        assert row["access_status"] == "pending", row["access_status"]
+        # Kirish tasdiqlash tizimi olib tashlandi — hamma darhol 'approved'.
+        assert row["access_status"] == "approved", row["access_status"]
         assert row["is_banned"] in (0, False)
         await db.touch_user(TEST_USER)
         assert (await db.get_user(TEST_USER))["last_activity"] is not None
-
-        await db.set_access(TEST_USER, "approved", 111111111)
-        assert (await db.get_user(TEST_USER))["access_status"] == "approved"
-        assert not any(
-            u["user_id"] == TEST_USER for u in await db.pending_access_users()
-        )
 
         # -- premium ------------------------------------------------------------
         until = await db.extend_premium(TEST_USER, 30)

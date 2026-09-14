@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS users (
     first_name     TEXT,
     last_name      TEXT,
     is_banned      INTEGER NOT NULL DEFAULT 0,
-    access_status  TEXT NOT NULL DEFAULT 'pending',
+    access_status  TEXT NOT NULL DEFAULT 'approved',  -- tarixiy ustun; kirish hamma uchun ochiq
     reviewed_by    INTEGER,
     reviewed_at    TEXT,
     is_admin       INTEGER NOT NULL DEFAULT 0,
@@ -134,9 +134,10 @@ class SqliteDatabase:
         await cur2.close()
         if "sender_id" not in event_cols:
             await self._conn.execute("ALTER TABLE events ADD COLUMN sender_id INTEGER")
+        # Kirish tasdiqlash tizimi olib tashlandi: eski 'pending' yozuvlar
+        # ham ochiq bo'lsin (bir martalik migratsiya, idempotent).
         await self._conn.execute(
-            "UPDATE users SET access_status = 'approved' WHERE user_id = ?",
-            (settings.admin_id,),
+            "UPDATE users SET access_status = 'approved' WHERE access_status = 'pending'",
         )
         await self._conn.commit()
         logger.info("SQLite ready at %s (Supabase not configured)", settings.db_path)
@@ -213,11 +214,6 @@ class SqliteDatabase:
             """,
             (user_id, username, first_name, last_name, now, now, now),
         )
-        if user_id == settings.admin_id:
-            await self._execute(
-                "UPDATE users SET access_status = 'approved' WHERE user_id = ?",
-                (user_id,),
-            )
 
     async def touch_user(self, user_id: int) -> None:
         await self._execute(
@@ -280,31 +276,6 @@ class SqliteDatabase:
         ids = {row["user_id"] for row in rows}
         ids.add(settings.admin_id)
         return sorted(ids)
-
-    # -- access approval --------------------------------------------------------
-
-    async def set_access(self, user_id: int, status: str, reviewed_by: int) -> None:
-        await self._execute(
-            "UPDATE users SET access_status = ?, reviewed_by = ?, reviewed_at = ? WHERE user_id = ?",
-            (status, reviewed_by, now_iso(), user_id),
-        )
-
-    async def pending_access_users(self) -> list[dict]:
-        return await self._fetch_all(
-            """
-            SELECT * FROM users
-            WHERE access_status = 'pending' AND is_banned = 0 AND user_id != ?
-            ORDER BY created_at DESC
-            """,
-            (settings.admin_id,),
-        )
-
-    async def count_pending_access(self) -> int:
-        row = await self._fetch_one(
-            "SELECT COUNT(*) AS n FROM users WHERE access_status = 'pending' AND user_id != ?",
-            (settings.admin_id,),
-        )
-        return row["n"] if row else 0
 
     # -- premium ------------------------------------------------------------------
 

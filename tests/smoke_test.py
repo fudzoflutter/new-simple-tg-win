@@ -32,10 +32,7 @@ def part1_offline() -> None:
     assert menu.inline_keyboard[0][0].style == "primary"
     assert menu.inline_keyboard[1][0].style == "success"
 
-    admin_kb.panel(pending_access=2, pending_payments=1)
-    admin_kb.access_buttons([("Ali", 5)])
-    admin_kb.access_pager(1, 3, admin_kb.access_buttons([("Ali", 5)]))
-    admin_kb.access_decision(5)
+    admin_kb.panel(pending_payments=1)
     admin_kb.users_pager(2, 5, admin_kb.user_buttons([("Bob", 6)]))
     admin_kb.user_card(6, banned=False)
     admin_kb.plans_menu()
@@ -60,7 +57,6 @@ def part1_offline() -> None:
         premium_line=texts.PREMIUM_INACTIVE,
         total="0", edits="0", deletes="0",
     ))
-    texts.ADMIN_NEW_ACCESS_REQUEST.format(E_USER="u", E_ID="i", user="x", user_id=1, username="@a")
     print("PART 1 (offline) PASSED ✅")
 
 
@@ -70,14 +66,10 @@ async def part2_supabase() -> None:
 
     await db.init()
     try:
-        # -- access approval oqimi --------------------------------------------
+        # -- kirish ochiq (tasdiqlash tizimi olib tashlandi) ------------------
         await db.upsert_user(9001, "testuser", "Test", None)
         row = await db.get_user(9001)
-        assert row["access_status"] == "pending", "yangi foydalanuvchi pending bo'lishi kerak"
-        assert await db.count_pending_access() >= 1
-
-        await db.set_access(9001, "approved", 111111111)
-        assert (await db.get_user(9001))["access_status"] == "approved"
+        assert row["access_status"] == "approved", "yangi foydalanuvchi darhol approved bo'lishi kerak"
 
         # -- premium -----------------------------------------------------------
         until = await db.extend_premium(9001, 30)

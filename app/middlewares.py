@@ -3,10 +3,8 @@ Outer middlewares (har bir update uchun ishlaydi).
 
 * :class:`RegisterUserMiddleware` – foydalanuvchini DBga yozadi va
   ``last_activity`` ni yangilab boradi ("kim onlayn" ekrani uchun).
-  YANGI foydalanuvchi avtomatik ``access_status='pending'`` bo'ladi —
-  admin tasdiqlamaguncha bot ishlamaydi (yangi talab).
-* :class:`AccessGuardMiddleware` – banlangan va tasdiqlanmagan
-  foydalanuvchilarning so'rovlarini to'sadi.
+* :class:`AccessGuardMiddleware` – banlangan foydalanuvchilarning
+  so'rovlarini to'sadi.
 
 Ega (``settings.admin_id``) hech qachon bloklanmaydi.
 """
@@ -87,20 +85,12 @@ MAX_BUCKETS = 5_000
 
 
 class AccessGuardMiddleware(BaseMiddleware):
-    """Ban + kirish tasdiqlash tekshiruvi.
+    """Ban tekshiruvi.
 
-    - ``is_banned``        -> bot umuman ishlamaydi
-    - ``access_status = 'pending'``  -> "so'rovingiz ko'rib chiqilmoqda"
-    - ``access_status = 'rejected'`` -> "rad etilgan"
+    - ``is_banned`` -> bot umuman ishlamaydi.
     Ega doim o'tadi.  business_* update'lariga tegmaydi (ularning
     from_user — suhbatdosh, tekshiruv uchun mos emas; ularni business.py
     ning o'zida connection egasi bo'yicha tekshiramiz).
-
-    MUHIM (bug fix): ``/start`` bu to'siqdan O'TADI hatto pending/rejected
-    bo'lganda ham — aks holda kirish SO'ROVI panelda umuman paydo
-    bo'lmaydi (handler egani xabar qiladi, to'siq esa hamma narsani
-    yutib yuborardi).  Handler o'zi statusga qarab to'g'ri ekranni
-    ko'rsatadi.
     """
 
     async def __call__(
@@ -114,33 +104,12 @@ class AccessGuardMiddleware(BaseMiddleware):
             isinstance(event, Message) and not event.business_connection_id
         )
 
-        # /start har doim handlerga yetib borishi kerak (so'rov ro'yxati
-        # shu yerda to'ldiriladi).  Banlangan foydalanuvchi uchun ham
-        # handler o'zi BANNED ekranni ko'rsatadi.
-        is_start = (
-            isinstance(event, Message)
-            and (event.text or "").strip().lower().startswith("/start")
-        )
-
-        if (
-            user is not None
-            and user.id != settings.admin_id
-            and is_direct
-            and not is_start
-        ):
+        if user is not None and user.id != settings.admin_id and is_direct:
             row = await db.get_user(user.id)
 
             if row and row.get("is_banned"):
                 logger.info("Blocked banned user %s", user.id)
                 await self._reject(event, texts.BANNED, texts.BAN_CALLBACK)
-                return None
-
-            status = (row or {}).get("access_status") or "pending"
-            if status == "pending":
-                await self._reject(event, texts.ACCESS_PENDING, texts.ACCESS_PENDING_CALLBACK)
-                return None
-            if status == "rejected":
-                await self._reject(event, texts.ACCESS_REJECTED, texts.ACCESS_REJECTED_CALLBACK)
                 return None
 
         return await handler(event, data)

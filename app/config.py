@@ -98,32 +98,18 @@ class Settings:
     payment_card_holder: str = "J. N"
     # Optional bank name shown above the card number.
 
+    # --- Activity report layout -----------------------------------------------
+    # Sarlavha bilan asosiy qatorlar ORASIDAGI bo'sh qatorlar soni.
+    # 1 = "✏️ Xabar tahrirlandi" va "👤 Kim:" orasida BITTA bo'sh qator
+    # (hozirgi ko'rinish).  0 = yopiq, 2 = juda keng.
+    report_line_gap: int = 1
+
     # --- Premium section visibility (new requirement) -------------------------
     # Premium tugmasi standartda YASHIRIN.  Admin paneldagi "Premium bo'limi"
     # tugmasi orqali yoqiladi.  Bu boshlang'ich qiymat — holat DBda saqlanadi.
     premium_enabled_by_default: bool = False
 
-    # --- Premium emoji IDs ---------------------------------------------------
-    # These IDs point to custom (premium) emoji packs.  Replace them with IDs
-    # of emojis from packs YOUR bot can use: the bot account must own a
-    # Fragment username or have Telegram Premium to display them.  If an
-    # invalid/empty ID is used the button simply shows text only.
-    emoji_stats: str = field(default_factory=lambda: _env("EMOJI_ID_STATS", "5368324170671202286"))
-    emoji_premium: str = field(default_factory=lambda: _env("EMOJI_ID_PREMIUM", "5445585590822480435"))
-    emoji_connect: str = field(default_factory=lambda: _env("EMOJI_ID_CONNECT", "5333163668629442693"))
-    emoji_admins: str = field(default_factory=lambda: _env("EMOJI_ID_ADMINS", "5455669926782445014"))
-    emoji_help: str = field(default_factory=lambda: _env("EMOJI_ID_HELP", "5368324170671202286"))
-    emoji_broadcast: str = field(default_factory=lambda: _env("EMOJI_ID_BROADCAST", "5455669926782445014"))
-    emoji_back: str = field(default_factory=lambda: _env("EMOJI_ID_BACK", "5445585590822480435"))
-
-    # Premium emoji used INSIDE message texts (statistics screen, reports).
-    emoji_user: str = field(default_factory=lambda: _env("EMOJI_ID_USER", "6145672251489391716"))
-    emoji_idcard: str = field(default_factory=lambda: _env("EMOJI_ID_IDCARD", "5837071798935492251"))
-    emoji_inbox: str = field(default_factory=lambda: _env("EMOJI_ID_INBOX", "5472239203590888751"))
-    emoji_edit: str = field(default_factory=lambda: _env("EMOJI_ID_EDIT", "5395444784611480792"))
-    emoji_trash: str = field(default_factory=lambda: _env("EMOJI_ID_TRASH", "5445267414562389170"))
-    emoji_chat: str = field(default_factory=lambda: _env("EMOJI_ID_CHAT", "5443038326535759644"))
-    emoji_clock: str = field(default_factory=lambda: _env("EMOJI_ID_CLOCK", "5787488119490088755"))
+    # EMOJILAR endi app/emoji_config.py da (yagona ro'yxat) — bu yerda emas.
 
     @property
     def supabase_host(self) -> str:

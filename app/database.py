@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS users (
     first_name     TEXT,
     last_name      TEXT,
     is_banned      BOOLEAN NOT NULL DEFAULT FALSE,
-    access_status  TEXT NOT NULL DEFAULT 'pending',
+    access_status  TEXT NOT NULL DEFAULT 'approved',  -- tarixiy ustun; kirish hamma uchun ochiq
     reviewed_by    BIGINT,
     reviewed_at    TEXT,
     is_admin       BOOLEAN NOT NULL DEFAULT FALSE,
@@ -204,14 +204,6 @@ class Database:
     async def all_admins(self) -> list[int]:
         return await self._backend.all_admins()
 
-    async def set_access(self, user_id: int, status: str, reviewed_by: int) -> None:
-        await self._backend.set_access(user_id, status, reviewed_by)
-
-    async def pending_access_users(self) -> list[dict]:
-        return await self._backend.pending_access_users()
-
-    async def count_pending_access(self) -> int:
-        return await self._backend.count_pending_access()
 
     async def set_premium(self, user_id: int, until: Optional[datetime]) -> None:
         await self._backend.set_premium(user_id, until)
@@ -401,6 +393,11 @@ class PostgresDatabase:
             await conn.execute(
                 "ALTER TABLE events ADD COLUMN IF NOT EXISTS sender_id BIGINT"
             )
+            # Kirish tasdiqlash tizimi olib tashlandi: eski 'pending' yozuvlar
+            # ham ochiq bo'lsin (bir martalik, idempotent).
+            await conn.execute(
+                "UPDATE users SET access_status = 'approved' WHERE access_status = 'pending'"
+            )
         await self._import_sqlite_once()
         logger.info("Supabase Postgres ready (%s)", settings.supabase_host)
 
@@ -457,10 +454,11 @@ class PostgresDatabase:
         first_name: Optional[str],
         last_name: Optional[str],
     ) -> None:
-        """Insert the user if new, otherwise refresh profile fields.
+        """        Insert the user if new, otherwise refresh profile fields.
 
-        Egа (settings.admin_id) HECH QACHON 'pending' bo'lib qolmasin:
-        yangi qator ham darhol 'approved' bo'ladi.
+        Kirish tasdiqlash tizimi OLIB TASHLANGAN (yangi talab): hamma
+        foydalanuvchi botdan bemalol foydalanadi; yagona cheklov — ban.
+        Eski 'pending' yozuvlari ham 'approved' qilib yangilanadi.
         """
         now = _now()
         await self._execute(
@@ -482,11 +480,6 @@ class PostgresDatabase:
             now,
             now,
         )
-        if user_id == settings.admin_id:
-            await self._execute(
-                "UPDATE users SET access_status = 'approved' WHERE user_id = $1",
-                user_id,
-            )
 
     async def touch_user(self, user_id: int) -> None:
         await self._execute(
@@ -556,37 +549,6 @@ class PostgresDatabase:
         ids = {row["user_id"] for row in rows}
         ids.add(settings.admin_id)
         return sorted(ids)
-
-    # -- access approval (admin decides who may use the bot) ------------------
-
-    async def set_access(self, user_id: int, status: str, reviewed_by: int) -> None:
-        """status: 'pending' | 'approved' | 'rejected'."""
-        await self._execute(
-            "UPDATE users SET access_status = $1, reviewed_by = $2, reviewed_at = $3 WHERE user_id = $4",
-            status,
-            reviewed_by,
-            _now(),
-            user_id,
-        )
-
-    async def pending_access_users(self) -> list[dict]:
-        """Everyone waiting for the admin's decision (owner excluded)."""
-        return await self._fetch_all(
-            """
-            SELECT * FROM users
-            WHERE access_status = 'pending' AND is_banned = FALSE AND user_id != $1
-            ORDER BY created_at DESC
-            """,
-            settings.admin_id,
-        )
-
-    async def count_pending_access(self) -> int:
-        return int(
-            await self._fetchval(
-                "SELECT COUNT(*) FROM users WHERE access_status = 'pending' AND user_id != $1",
-                settings.admin_id,
-            )
-        )
 
     # -- premium -------------------------------------------------------------
 
@@ -971,7 +933,7 @@ class PostgresDatabase:
                         """,
                         u["user_id"], u.get("username"), u.get("first_name"),
                         u.get("last_name"), bool(u.get("is_banned")),
-                        u.get("access_status") or "pending", u.get("reviewed_by"),
+                        u.get("access_status") or "approved", u.get("reviewed_by"),
                         u.get("reviewed_at"), bool(u.get("is_admin")),
                         u.get("premium_until"), u.get("connected_at"),
                         u.get("last_activity"), u["created_at"],

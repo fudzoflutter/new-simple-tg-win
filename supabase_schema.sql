@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS users (
     first_name     TEXT,
     last_name      TEXT,
     is_banned      BOOLEAN NOT NULL DEFAULT FALSE,
-    access_status  TEXT NOT NULL DEFAULT 'pending',
+    access_status  TEXT NOT NULL DEFAULT 'approved',  -- tarixiy ustun; kirish hamma uchun ochiq
     reviewed_by    BIGINT,
     reviewed_at    TEXT,
     is_admin       BOOLEAN NOT NULL DEFAULT FALSE,

@@ -33,10 +33,9 @@ from aiogram.types import (
 
 from app.config import settings
 from app.database import db
-from app.keyboards import admin_kb, user_kb
+from app.keyboards import user_kb
 from app.services.reporter import Reporter
 from app.utils import texts
-from app.utils.formatting import mention_by_id
 
 router = Router(name="business")
 logger = logging.getLogger(__name__)
@@ -82,61 +81,27 @@ async def on_connection(connection: BusinessConnection, bot: Bot) -> None:
     # 1) Foydalanuvchining o'ziga xabar (3-band).
     #    ULANGANLIK darhol tasdiqlanadi: birinchi ulanish — "amalga oshdi",
     #    qayta yoqilganlik — "tiklandi", o'chirilganlik — "to'xtatildi".
-    #    Kirish statusi tekshiriladi: tasdiqlanmagan foydalanuvchi faqat
-    #    'so'rov ko'rib chiqilmoqda' xabarini ko'radi, hisobotlar esa
-    #    umuman yuborilmaydi (reporter ham shu statusni tekshiradi).
-    row = await db.get_user(user.id)
-    access_status = (row or {}).get("access_status") or "pending"
     try:
-        if access_status == "approved":
-            if is_enabled:
-                text = (
-                    texts.BUSINESS_ENABLED_AGAIN if existed
-                    else texts.BUSINESS_CONNECTED
-                )
-            else:
-                text = texts.BUSINESS_DISABLED
-            await bot.send_message(
-                connection.user_chat_id, text, parse_mode="HTML"
+        if is_enabled:
+            text = (
+                texts.BUSINESS_ENABLED_AGAIN if existed
+                else texts.BUSINESS_CONNECTED
             )
-            await bot.send_message(
-                connection.user_chat_id,
-                f"{texts.WELCOME}\n\n{texts.MENU_HINT}",
-                reply_markup=user_kb.main_menu(
-                    connected=is_enabled,
-                    premium_enabled=await _premium_enabled_flag(),
-                ),
-            )
-        elif access_status == "rejected":
-            text = texts.ACCESS_REJECTED
-            await bot.send_message(connection.user_chat_id, text, parse_mode="HTML")
         else:
-            text = texts.ACCESS_PENDING
-            await bot.send_message(connection.user_chat_id, text, parse_mode="HTML")
+            text = texts.BUSINESS_DISABLED
+        await bot.send_message(
+            connection.user_chat_id, text, parse_mode="HTML"
+        )
+        await bot.send_message(
+            connection.user_chat_id,
+            f"{texts.WELCOME}\n\n{texts.MENU_HINT}",
+            reply_markup=user_kb.main_menu(
+                connected=is_enabled,
+                premium_enabled=await _premium_enabled_flag(),
+            ),
+        )
     except Exception:  # noqa: BLE001 – foydalanuvchi botni bloklagan bo'lishi mumkin
         logger.info("Could not notify user %s about connection change", user.id)
-
-    # 1b) Tasdiqlanmagan foydalanuvchi ulansa — EGAGA ham so'rov xabari.
-    #     (/start orqali kelgan so'rovlar user.py da xabar qilinadi; bu joy
-    #     faqat business-ulanish yo'li bilan kelganlar uchun.)
-    if access_status == "pending" and user.id != settings.admin_id:
-        try:
-            await bot.send_message(
-                settings.admin_id,
-                texts.ADMIN_NEW_ACCESS_REQUEST.format(
-                    E_USER=texts.E_USER,
-                    E_ID=texts.E_ID,
-                    user=mention_by_id(
-                        user.id, user.first_name or "User", user.username
-                    ),
-                    user_id=user.id,
-                    username=f"@{user.username}" if user.username else "—",
-                ),
-                parse_mode="HTML",
-                reply_markup=admin_kb.access_decision(user.id),
-            )
-        except Exception:  # noqa: BLE001
-            logger.info("Could not notify admin about access request %s", user.id)
 
     # 2) Egaga REAL-TIME xabar (xabar mazmuni yo'q — faqat hodisa fakti).
     #    Ulanganda ham, uzilganda ham admin DARHOL biladi (yangi talab).

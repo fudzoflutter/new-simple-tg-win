@@ -44,6 +44,7 @@ from aiogram.types import (
     User as TgUser,
 )
 
+from app.config import settings
 from app.database import db
 from app.utils.formatting import esc, fmt_time, mention_by_id
 from app.utils.texts import (
@@ -283,9 +284,9 @@ class Reporter:
     async def _activate(self, connection_id: Optional[str]) -> Optional[int]:
         """Ulanishni tekshiradi va egasini keshlaydi.
 
-        Ulanish faol va egasining kirish statusi 'approved' bo'lsa — eganing
-        user_id qaytariladi (hisobot manzili ham keshlanadi).  Aks holda
-        None: na kesh, na hisobot.  Har bir 'yo'q' sababi LOG qilinadi.
+        Ulanish faol bo'lsa — eganing user_id qaytariladi (hisobot manzili
+        ham keshlanadi).  Aks holda None: na kesh, na hisobot.  Har bir
+        'yo'q' sababi LOG qilinadi.
         """
         if not connection_id:
             logger.warning("Reporter: business_connection_id bo'sh — update o'tdi")
@@ -296,13 +297,6 @@ class Reporter:
             return None
         if not conn.get("is_enabled"):
             logger.info("Reporter: ulanish o'chirilgan (%s)", connection_id)
-            return None
-        owner = await db.get_user(conn["user_id"])
-        if owner and (owner.get("access_status") or "pending") != "approved":
-            logger.info(
-                "Reporter: eganing kirish statusi 'approved' emas (user=%s)",
-                conn["user_id"],
-            )
             return None
         self._owner_id = int(conn["user_id"])
         chat_id = conn.get("user_chat_id") or conn.get("user_id")
@@ -440,7 +434,7 @@ class Reporter:
         """
         if chat_id is None:
             return False
-        cap = header
+        cap = self._apply_gap(header)
         if caption:
             cap += f"\n💬 Caption: {self._clip(caption)}"
         cap += self._footer(chat_title)
@@ -469,10 +463,23 @@ class Reporter:
             logger.info("Resend of cached media failed (type=%s)", event_type)
             return False
 
+    @staticmethod
+    def _apply_gap(html: str) -> str:
+        """Sarlavha bilan asosiy qatorlar ORASIDAGI masofani sozlaydi.
+
+        Har bir hisobot shabloni sarlavhadan keyin aynan bitta "\n\n"
+        (bitta bo'sh qator) bilan boshlanadi — birinchi uchraganni
+        ``settings.report_line_gap`` ta bo'sh qatorga almashtiramiz:
+            1 -> hozirgi ko'rinish, 0 -> yopiq, 2 -> kengroq.
+        """
+        gap_count = max(0, int(settings.report_line_gap))
+        return html.replace("\n\n", "\n" * (gap_count + 1), 1)
+
     async def _send(self, chat_id: Optional[int], html: str) -> None:
         if chat_id is None:
             logger.warning("Reporter: hisobot manzili yo'q — yuborilmadi")
             return
+        html = self._apply_gap(html)
         for attempt in (1, 2):
             try:
                 await self.bot.send_message(
