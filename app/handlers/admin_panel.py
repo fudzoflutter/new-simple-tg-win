@@ -7,6 +7,7 @@ kiradi: filtr main.py da routerga ulanadi (:class:`app.filters.IsAdmin`).
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from aiogram import F, Router
@@ -22,6 +23,7 @@ from app.utils import texts
 from app.utils.formatting import esc, fmt_date, fmt_datetime
 
 router = Router(name="admin_panel")
+logger = logging.getLogger(__name__)
 
 # Foydalanuvchi shu vaqt ichida faol bo'lsa — "onlayn" hisoblanadi.
 ONLINE_WINDOW_SECONDS = 120
@@ -181,11 +183,22 @@ async def _decide_access(cb: CallbackQuery, *, approved: bool) -> None:
     user_id = int(raw)
     row = await db.get_user(user_id)
     if row is None:
+        # TASHXIS: tugmadagi id topilmadi. Negativa: 1) foydalanuvchi bazadan
+        # o'chirilgan (masalan boshqa joyda tozalangan), 2) tugma ESKI nusxa
+        # xabardan qolgan (restart/redeploy ma'lumotlari yangilangan).
+        logger.warning(
+            "Access decision: user_id=%s NOT FOUND in DB (callback=%s)",
+            user_id, cb.data,
+        )
         await cb.answer(texts.ADMIN_USER_NOT_FOUND, show_alert=True)
         return
 
     await db.set_access(
         user_id, "approved" if approved else "rejected", cb.from_user.id
+    )
+    logger.info(
+        "Access decision: user_id=%s -> %s (by %s)",
+        user_id, "approved" if approved else "rejected", cb.from_user.id,
     )
 
     # Foydalanuvchiga qaror haqida xabar berish.

@@ -348,6 +348,33 @@ class PostgresDatabase:
         """Connect to Supabase, create tables, import old SQLite data once."""
         import asyncpg
 
+        # ANIQ XATO usuli: foydalanuvchi ba'zan SUPABASE_DB_URL ga
+        # LOYIHA SAYTINI (https://xxxx.supabase.co) yozib qo'yadi.
+        # Bu http/https bo'lsa — asyncpg umuman DSN sifatida o'qiy olmaydi.
+        # Bu yerda darhol tushunarli xato + tayyor TO'G'RI format beriladi.
+        _scheme = settings.supabase_db_url.split(":", 1)[0].lower()
+        if _scheme in ("http", "https"):
+            _ref = ""
+            try:
+                from urllib.parse import urlparse
+
+                host = urlparse(settings.supabase_db_url).hostname or ""
+                _ref = host.split(".")[0]
+            except Exception:  # noqa: BLE001
+                pass
+            raise RuntimeError(
+                "SUPABASE_DB_URL noto'g'ri: bu LOYIHA SAYTI (https://...), "
+                "baqa ULANISH MANZILI emas.\n\n"
+                "Supabase Dashboard -> CONNECT (yashil tugma) -> "
+                "'Connection pooling' -> URI ni nusxalang.  U shu ko'rinishda "
+                "bo'ladi:\n\n"
+                f"postgresql://postgres.{_ref}:[PAROLINGIZ]@aws-0-region.pooler.supabase.com:6543/postgres\n\n"
+                "[PAROLINGIZ] joyiga Supabase bazasi PAROLINI yozing "
+                "(unutasangiz: Settings -> Database -> Reset database password). "
+                "env.txt dagi SUPABASE_KEY bot tomonidan ISHLATILMAYDI — "
+                "uni o'chirishingiz mumkin."
+            )
+
         try:
             self._pool = await asyncpg.create_pool(
                 settings.supabase_db_url,

@@ -85,16 +85,13 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         await message.answer(texts.ACCESS_REJECTED)
         return
     if status == "pending":
-        # Menyu ham ILova qilinadi (faqat matn emas): admin tasdiqlagach
-        # foydalanuvchi /start ni YANA bir marta bosadi va DARHOL
-        # ishlaydigan menyuni ko'radi — qaytadan so'rov yubormaydi.
-        await message.answer(
-            texts.ACCESS_PENDING,
-            reply_markup=user_kb.main_menu(
-                connected=False,
-                premium_enabled=await _premium_enabled(),
-            ),
-        )
+        # TASDIQLANMAGAN foydalanuvchi FAQAT 'kutib turish' xabarini ko'radi —
+        # menyu/tugmalar YO'Q (talab: panelga ruxsat so'rovi keladi,
+        # foydalanuvchi hozir esa hech narsani boshqara olmaydi).
+        # Admin TASDIQLAGACH: unga bu chatga avtomatik tasdiq + ISHLAYDIGAN
+        # menyu yuboriladi (admin_panel.py, _decide_access) — /start ni
+        # qaytadan bosish shart emas.
+        await message.answer(texts.ACCESS_PENDING)
         await _notify_admin_about_request(message)
         return
 
