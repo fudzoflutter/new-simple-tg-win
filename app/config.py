@@ -28,8 +28,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # encoding="utf-8-sig" — Windows Notepad bilan saqlangan fayldagi YASHIRIN
 # BOM belgisini yutadi.  Bomsiz fayl bo'lsa ham zarari yo'q; BOM bilan
 # esa aks holda BIRINCHI satrdagi kalit (masalan BOT_TOKEN) o'qilmaydi!
-load_dotenv(BASE_DIR / "env.txt", encoding="utf-8-sig")
-load_dotenv(BASE_DIR / ".env", encoding="utf-8-sig")
+# TEST rejimi: tests/ fayllari buni '1' qilib o'rnatadi — haqiqiy env.txt/.env
+# O'QILMAYDI (aks holda testlar PRODUCTION Supabasega yozib yuboradi).
+_SKIP_ENV_FILES = os.getenv("CODEBUFF_SKIP_ENV_FILE", "").strip() == "1"
+
+if not _SKIP_ENV_FILES:
+    load_dotenv(BASE_DIR / "env.txt", encoding="utf-8-sig")
+    load_dotenv(BASE_DIR / ".env", encoding="utf-8-sig")
 
 
 def _load_utf16_fallback(path: Path) -> None:
@@ -38,6 +43,8 @@ def _load_utf16_fallback(path: Path) -> None:
     Bunday faylni utf-8-sig ham o'qiy olmaydi (kalitlar 0 ta bo'ladi).
     Fayl boshi FF FE / FE FF bilan boshlansa — UTF-16 deb qayta o'qiydi.
     """
+    if _SKIP_ENV_FILES:
+        return
     try:
         raw = path.read_bytes()
     except OSError:
@@ -57,7 +64,7 @@ _load_utf16_fallback(BASE_DIR / ".env")
 # maxfiy kalitlarni boshqa joyga qo'ysa, shu o'zgaruvchi orqali ko'rsatiladi.
 # Ustuvorligi ENG BALAND (override=True) — ataylab ko'rsatilgan fayl g'alaba qiladi.
 _env_file_override = os.getenv("ENV_FILE", "").strip()
-if _env_file_override:
+if _env_file_override and not _SKIP_ENV_FILES:
     load_dotenv(_env_file_override, encoding="utf-8-sig", override=True)
 
 

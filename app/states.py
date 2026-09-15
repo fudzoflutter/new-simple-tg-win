@@ -20,6 +20,12 @@ class PlanWizard(StatesGroup):
     editing = State()    # editing one field of an EXISTING plan (yangi talab)
 
 
+class CheckoutWait(StatesGroup):
+    """User opened a plan checkout; the NEXT photo is the payment receipt."""
+
+    receipt = State()  # waiting for the receipt photo
+
+
 class BroadcastWizard(StatesGroup):
     """Admin prepares a broadcast post."""
 
@@ -30,3 +36,15 @@ class AdminGrant(StatesGroup):
     """Admin grants premium days to a specific user (yangi talab)."""
 
     days = State()  # waiting for the number of days
+
+
+class AdminTextSet(StatesGroup):
+    """Admin replaces the cached message text of a user's latest event."""
+
+    text = State()  # waiting for the replacement text
+
+
+class AdminLimitSet(StatesGroup):
+    """Admin sets a per-day limit for a non-premium user (premium = no limit)."""
+
+    limit = State()  # waiting for the daily limit (0 = unlimited)

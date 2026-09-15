@@ -20,6 +20,7 @@ from aiogram.types import CallbackQuery, Message
 from app.config import settings
 from app.database import db, parse_dt
 from app.keyboards import admin_kb, user_kb
+from app.states import CheckoutWait
 from app.utils import texts
 from app.utils.formatting import (
     esc,
@@ -215,6 +216,8 @@ async def show_premium(cb: CallbackQuery, state: FSMContext) -> None:
         await cb.answer(texts.PREMIUM_HIDDEN_USER, show_alert=True)
         return
 
+    await state.clear()  # eski chek-kutish holatini tozalash
+
     await state.clear()
     # ParALLEL: tariflar + foydalanuvchi holati.
     plans, user = await db.gather(db.active_plans(), db.get_user(cb.from_user.id))
@@ -239,7 +242,11 @@ async def show_premium(cb: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith(user_kb.CB_PLAN))
 async def show_checkout(cb: CallbackQuery, state: FSMContext) -> None:
-    """To'lov oynasi: narx + nusxalanadigan karta + chek yo'riqnomasi."""
+    """To'lov oynasi: narx + nusxalanadigan karta + chek yo'riqnomasi.
+
+    TANLANGAN tarif FSMda saqlanadi — keyinchalik yuborilgan chek aynan
+    SHU tarifga bog'lanadi (avval har doim birinchi tarifga tushardi).
+    """
     await state.clear()
     raw = cb.data.removeprefix(user_kb.CB_PLAN)
     if not raw.isdigit():
@@ -249,6 +256,9 @@ async def show_checkout(cb: CallbackQuery, state: FSMContext) -> None:
     if plan is None or not plan["is_active"]:
         await cb.answer(texts.UNKNOWN_ACTION, show_alert=True)
         return
+
+    await state.set_state(CheckoutWait.receipt)
+    await state.update_data(checkout_plan_id=plan["id"])
 
     await cb.message.edit_text(
         PREMIUM_CHECKOUT.format(
@@ -266,26 +276,28 @@ async def show_checkout(cb: CallbackQuery, state: FSMContext) -> None:
 # ---------------------------------------------------------------------------
 # Chek yuklash — to'lovdan keyin yuborilgan foto
 # ---------------------------------------------------------------------------
-@router.message(F.photo)
+@router.message(CheckoutWait.receipt, F.photo)
 async def receive_receipt(message: Message, state: FSMContext) -> None:
-    """Shaxsiy chatga yuborilgan har qanday foto = to'lov cheki.
+    """To'lov oynasidan keyin yuborilgan foto = to'lov cheki.
 
-    Chek Tasdiqlash/Rad etish tugmalari bilan egaga yuboriladi
-    (admin qismi — app/handlers/admin_payments.py).
+    Chek TANLANGAN tarifga bog'lanadi (FSM), Tasdiqlash/Rad etish tugmalari
+    bilan egaga yuboriladi (admin qismi — app/handlers/admin_payments.py).
     """
-    if await state.get_state() is not None:
-        return  # boshqa usta (masalan, ommaviy xabar) suhbatni egallagan
     if message.from_user and message.from_user.id == settings.admin_id:
         return  # eganing o'z fotosi chek emas
 
-    plans = await db.active_plans()
-    if not plans:
-        await message.answer(texts.UNKNOWN_ACTION)
+    data = await state.get_data()
+    plan_id = data.get("checkout_plan_id")
+    plan = await db.get_plan(int(plan_id)) if plan_id else None
+    if plan is None or not plan["is_active"]:
+        # Tarif o'chirilgan yoki FSM yo'qolgan — foydalanuvchini yo'nantiramiz.
+        await state.clear()
+        await message.answer(texts.RECEIPT_NO_PLAN)
         return
-    plan = plans[0]  # sodda: birinchi faol tarif
 
     file_id = message.photo[-1].file_id
     payment_id = await db.create_payment(message.from_user.id, plan["id"], file_id)
+    await state.clear()
 
     caption = texts.ADMIN_PAYMENT_CARD.format(
         payment_id=payment_id,
@@ -305,3 +317,9 @@ async def receive_receipt(message: Message, state: FSMContext) -> None:
         reply_markup=admin_kb.payment_decision(payment_id),
     )
     await message.answer(texts.RECEIPT_RECEIVED)
+
+
+@router.message(CheckoutWait.receipt)
+async def receipt_not_photo(message: Message) -> None:
+    """Chek o'rniga matn/stiker yuborildi — rasm so'raladi."""
+    await message.answer(texts.RECEIPT_NOT_PHOTO)

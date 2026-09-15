@@ -81,6 +81,9 @@ async def on_connection(connection: BusinessConnection, bot: Bot) -> None:
     # 1) Foydalanuvchining o'ziga xabar (3-band).
     #    ULANGANLIK darhol tasdiqlanadi: birinchi ulanish — "amalga oshdi",
     #    qayta yoqilganlik — "tiklandi", o'chirilganlik — "to'xtatildi".
+    #    user_chat_id bo'lmasa (ba'zi Telegram versiyalari yubormaydi) —
+    #    foydalanuvchining o'z IDsi ishlatiladi (shaxsiy chat = user_id).
+    notify_chat = connection.user_chat_id or user.id
     try:
         if is_enabled:
             text = (
@@ -89,11 +92,9 @@ async def on_connection(connection: BusinessConnection, bot: Bot) -> None:
             )
         else:
             text = texts.BUSINESS_DISABLED
+        await bot.send_message(notify_chat, text, parse_mode="HTML")
         await bot.send_message(
-            connection.user_chat_id, text, parse_mode="HTML"
-        )
-        await bot.send_message(
-            connection.user_chat_id,
+            notify_chat,
             f"{texts.WELCOME}\n\n{texts.MENU_HINT}",
             reply_markup=user_kb.main_menu(
                 connected=is_enabled,

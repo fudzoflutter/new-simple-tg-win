@@ -44,6 +44,10 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+# Loyiha ildizini import yo'liga qo'shamiz — aks holda "No module named 'app'"
+# (fayl tests/ ichidan to'g'ridan-to'g'ri ishga tushirilganda).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 PASS = "\u2705"
 
 # ---------------------------------------------------------------------------
@@ -61,6 +65,10 @@ else:
     os.environ["DB_PATH"] = str(Path(_tmpdir) / "offline.db")
     # Remove BEFORE app.config is imported anywhere in this process.
     _LIVE_URL = os.environ.pop("SUPABASE_DB_URL", None)
+    # env.txt loyihaning HAQIQIY kalitlarini o'z ichiga oladi (BOT_TOKEN,
+    # SUPABASE_DB_URL...).  Testlardan OLDIN uni yopamiz — aks holda app.config
+    # uni o'qib olib, part 1 testlari PRODUCTION Supabasega yozib yuboradi.
+    os.environ["CODEBUFF_SKIP_ENV_FILE"] = "1"
 
 # Shared test ids (also used by the live part for easy cleanup).
 TEST_USER = 910001

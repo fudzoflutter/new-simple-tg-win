@@ -35,7 +35,23 @@ UPSERT_INTERVAL_SECONDS = 60.0
 
 # Ban tekshiruvi ham har update'da DB o'qishini talab qilmasin — 30 sek
 # kesh.  Ban/unban kuchga kechikishi <= 30 s (amaliy jihatdan sezilmaydi).
+# Admin paneldan ban/unban qilinganda KESH ATAYIN BEKOR qilinadi
+# (:func:`invalidate_ban_cache`) — o'zgarish DARHOL kuchga kiradi.
 BAN_CACHE_TTL_SECONDS = 30.0
+
+# Keshlar (protsess ichida) — MAXSUS: faqat event loop ichidan o'zgartiriladi.
+_last_upsert: dict[int, float] = {}
+_ban_cache: dict[int, tuple[float, bool]] = {}
+_MAX_BUCKETS = 5_000
+
+
+def invalidate_ban_cache(user_id: int) -> None:
+    """Foydalanuvchining ban-keshini tozalaydi.
+
+    Admin panelda «⛔️ Cheklash» bosilganda foydalanuvchi 30 sekund KUTMASIN
+    — keyingi so'rovida DARHOL bloklansin (va aksincha, unban darhol ishlasin).
+    """
+    _ban_cache.pop(user_id, None)
 
 
 class RegisterUserMiddleware(BaseMiddleware):
@@ -61,9 +77,15 @@ class RegisterUserMiddleware(BaseMiddleware):
             # TEZLIK: upsert har update'da emas — foydalanuvchi uchun 60 s da
             # bir marta (yangi foydalanuvchi esa DARHOL yoziladi).
             now = time.monotonic()
-            last = self._last_upsert.get(user.id, 0.0)
+            last = _last_upsert.get(user.id, 0.0)
             if now - last >= UPSERT_INTERVAL_SECONDS:
-                self._last_upsert[user.id] = now
+                # YAZUVNI boshlashdan OLDIN belgilaymiz: xato bo'lsa ham
+                # keyingi urinish 60 s dan KECHIN bo'ladi (har update'da
+                # qayta urinib botni sekinlashtirmaslik uchun).
+                _last_upsert[user.id] = now
+                if len(_last_upsert) > _MAX_BUCKETS:
+                    oldest = next(iter(_last_upsert))
+                    _last_upsert.pop(oldest, None)
                 try:
                     await db.upsert_user(
                         user_id=user.id,
@@ -75,30 +97,27 @@ class RegisterUserMiddleware(BaseMiddleware):
                     logger.exception("Failed to upsert user %s", user.id)
 
             # Anti-spam: admin uchun emas.
-            if user.id != settings.admin_id and self._is_flooding(user.id):
+            if user.id != settings.admin_id and _is_flooding(user.id):
                 logger.warning("Rate limit hit for user %s", user.id)
                 return None
 
         return await handler(event, data)
 
-    _last_upsert: dict[int, float] = {}
-
     @staticmethod
     def _is_flooding(user_id: int) -> bool:
         # Xotira cheklovi: juda ko'p noyob id to'plansa (spam/attack)
         # eng qadimgi yozuvlarni tashlab qo'yamiz.
-        if len(RegisterUserMiddleware._buckets) > MAX_BUCKETS:
-            oldest = next(iter(RegisterUserMiddleware._buckets))
-            RegisterUserMiddleware._buckets.pop(oldest, None)
+        if len(_buckets) > _MAX_BUCKETS:
+            oldest = next(iter(_buckets))
+            _buckets.pop(oldest, None)
         now = time.monotonic()
-        window: list[float] = RegisterUserMiddleware._buckets.setdefault(user_id, [])
+        window: list[float] = _buckets.setdefault(user_id, [])
         window[:] = [t for t in window if now - t < RATE_WINDOW]
         window.append(now)
         return len(window) > RATE_LIMIT_EVENTS
 
-    _buckets: dict[int, list[float]] = {}
 
-MAX_BUCKETS = 5_000
+_buckets: dict[int, list[float]] = {}
 
 
 class AccessGuardMiddleware(BaseMiddleware):
@@ -123,18 +142,19 @@ class AccessGuardMiddleware(BaseMiddleware):
 
         if user is not None and user.id != settings.admin_id and is_direct:
             # TEZLIK: ban holati 30 s KESHLANADI — har bir tugma uchun DB
-            # o'qish shart emas.  Ban/unban kuchga kechikishi <= 30 s.
+            # o'qish shart emas.  Admin paneldagi ban/unban KESHNI BEKOR
+            # qiladi (:func:`invalidate_ban_cache`) — kechikish yo'q.
             now = time.monotonic()
-            cached = self._ban_cache.get(user.id)
+            cached = _ban_cache.get(user.id)
             if cached is not None and now - cached[0] < BAN_CACHE_TTL_SECONDS:
                 banned = cached[1]
             else:
                 row = await db.get_user(user.id)
                 banned = bool(row and row.get("is_banned"))
-                if len(self._ban_cache) > MAX_BUCKETS:
-                    oldest = next(iter(self._ban_cache))
-                    self._ban_cache.pop(oldest, None)
-                self._ban_cache[user.id] = (now, banned)
+                if len(_ban_cache) > _MAX_BUCKETS:
+                    oldest = next(iter(_ban_cache))
+                    _ban_cache.pop(oldest, None)
+                _ban_cache[user.id] = (now, banned)
 
             if banned:
                 logger.info("Blocked banned user %s", user.id)
@@ -142,8 +162,6 @@ class AccessGuardMiddleware(BaseMiddleware):
                 return None
 
         return await handler(event, data)
-
-    _ban_cache: dict[int, tuple[float, bool]] = {}
 
     @staticmethod
     async def _reject(event: TelegramObject, html_text: str, plain_text: str) -> None:

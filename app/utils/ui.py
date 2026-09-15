@@ -20,7 +20,13 @@ from __future__ import annotations
 
 from typing import Optional, Sequence
 
-from aiogram.types import CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.types import (
+    CopyTextButton,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from app.emoji_config import EMOJI, tg_e  # noqa: F401  (tg_e — eski importlar uchun)
 
@@ -106,3 +112,31 @@ def btn(
 def kb(rows: Sequence[Sequence[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
     """Build an InlineKeyboardMarkup from rows of buttons."""
     return InlineKeyboardMarkup(inline_keyboard=[list(row) for row in rows])
+
+
+async def edit_or_send(
+    message: Message, text: str, reply_markup: InlineKeyboardMarkup | None = None
+) -> None:
+    """Xabarni joyida tahrirlash; bo'lmasa yangi xabar sifatida yuborish.
+
+    Admin paneli bir xil tugma bosilganda Telegram "message is not
+    modified" (400) bilan yiqilardi — paneldagi TUGMALAR eskirgan holatda
+    qolardi.  Bu yordamchi:
+      * "not modified" -> jim o'tadi (aynan shu ko'rinish ekranda turibdi);
+      * "message can't be edited" (eski/servis xabarlar) -> yangi xabar;
+      * boshqa Telegram xatolari ham botni ishdan chiqarmaydi.
+    """
+    try:
+        await message.edit_text(text, reply_markup=reply_markup)
+    except TelegramBadRequest as exc:
+        if "not modified" in str(exc).lower():
+            return
+        try:
+            await message.answer(text, reply_markup=reply_markup)
+        except Exception:  # noqa: BLE001 – foydalanuvchi botni bloklagan
+            pass
+    except Exception:  # noqa: BLE001 – hech qachon handler yiqilmasin
+        try:
+            await message.answer(text, reply_markup=reply_markup)
+        except Exception:  # noqa: BLE001
+            pass

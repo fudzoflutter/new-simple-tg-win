@@ -34,9 +34,9 @@ E_CLOCK = EMOJI.clock
 # /start – asosiy menyu (1–2-bandlar)
 # ---------------------------------------------------------------------------
 WELCOME = (
-    f"👋 <b>Assalomu alaykum!</b>\n\n"
+    f"👋 <b>Assalomu alaykum! </b>\n\n"
     "Men sizning shaxsiy faoliyat-nazorat botingizman.\n"
-    "Meni Telegram akkauntingizga ulang — yuborgan, tahrirlagan va "
+    "Meni Telegram akkauntingizga ulang — sizga yuborib,tahrirlagan va "
     "o'chirgan xabarlaringizni, stiker, rasm va videolarni ham kuzatib boraman."
 )
 
@@ -105,6 +105,21 @@ PREMIUM_GRANTED_USER = (
     "💎 Premium obunangiz admin tomonidan faollashtirildi.\n"
     "<b>{date}</b> gacha faol."
 )
+
+# KUNLIK CHEKLOV haqidagi foydalanuvchi xabarlari (premium funksiya).
+LIMIT_REACHED_USER = (
+    "⏳ <b>Kunlik cheklovga yetdingiz.</b>\n\n"
+    "Bugun allaqachon <b>{limit}</b> ta xabar nusxalandi. Cheklov ertaga "
+    "yangilanadi.\n💎 Premium bilan cheklov YO'Q — barcha xabarlar "
+    "nusxalanadi."
+)
+LIMIT_SET_USER = (
+    "⏳ <b>Yangi cheklov</b>: kuniga <b>{limit}</b> ta xabar.\n"
+    "💎 Premium bu cheklovni olib tashlaydi."
+)
+LIMIT_REMOVED_USER = (
+    "⏳ Kunlik cheklov olib tashlandi — endi barcha xabarlar nusxalanadi."
+)
 PREMIUM_EXTENDED_USER = (
     "💎 <b>Premium uzaytirildi!</b>\n\n"
     "Endi obunangiz <b>{date}</b> gacha faol."
@@ -167,6 +182,12 @@ RECEIPT_RECEIVED = (
 )
 
 RECEIPT_NOT_PHOTO = "⚠️ Iltimos, to'lov chekining <b>rasmini</b> yuboring (foto yoki picture)."
+
+# Chek yuborilganda tarif topilmasa (o'chirilgan yoki FSM yo'qolgan).
+RECEIPT_NO_PLAN = (
+    "⚠️ Bu tarif endi mavjud emas. "
+    "Iltimos, <b>Premium</b> bo'limiga qaytib boshqa tarifni tanlang."
+)
 
 PREMIUM_APPROVED_USER = (
     "✅ <b>To'lov tasdiqlandi!</b>\n\n"
@@ -292,6 +313,18 @@ ADMIN_USERS_TITLE = (
 
 ADMIN_USER_EMPTY = "👥 Hozircha foydalanuvchilar yo'q."
 
+# Ro'yxatdagi bitta qator oxirida turgan ban belgisi (ADMIN_USER_CARD dan alohida,
+# chunki ro'yxat qatorlari _user_line tomonidan yig'iladi).
+USER_LINE_BAN_MARK = " ⛔️"
+
+# Onlayn ro'yxatdagi banlangan foydalanuvchi qatori uchun holat so'zi.
+STATUS_ONLINE_BANNED = "⛔️ (banlangan)"
+
+# Yuborilgan matn NUSXASI (kesh) — ko'rish uchun ekrani.
+ADMIN_LAST_TEXT = (
+    "\n\n💬 <b>Oxirgi nusxalangan xabar:</b>\n<i>{text}</i>"
+)
+
 ADMIN_USER_NOT_FOUND = "⚠️ Foydalanuvchi topilmadi."
 
 ADMIN_USER_CARD = (
@@ -378,6 +411,18 @@ WIZARD_PLAN_PRICE_INVALID = "⚠️ Iltimos, narxni butun son sifatida yuboring.
 ADMIN_PAYMENTS_TITLE = "💳 <b>Kutilayotgan to'lovlar</b>\n\n{list}"
 ADMIN_PAYMENTS_EMPTY = "Hozircha kutilayotgan to'lov yo'q."
 
+# Ro'yxatdagi BITTA to'lov qatori (tarif nomi + davomiyligi bilan).
+ADMIN_PAYMENT_LINE = (
+    "💳 #{payment_id} — {user}\n"
+    "💎 {plan} ({days} kun)\n"
+    "🕒 {created}\n"
+)
+ADMIN_PAYMENT_PLAN_GONE = "tarif o'chirilgan"
+ADMIN_PAYMENT_ZERO_DAYS = (
+    "⚠️ #{payment_id} belgilandi, lekin tarif topilmadi (0 kun) — "
+    "PREMIUM BERILMADI. Tarifni tiklab, qayta yuboring."
+)
+
 ADMIN_PAYMENT_CARD = (
     "💳 <b>To'lov #{payment_id}</b>\n\n"
     "👤 Kimdan: {user}\n"
@@ -402,6 +447,26 @@ ADMIN_GRANT_ASK = (
 ADMIN_GRANT_DAYS_INVALID = "⚠️ Iltimos, 1 dan 3650 gacha bo'lgan kun sonini yuboring."
 ADMIN_GRANT_DONE = "✅ {name} uchun premium <b>{date}</b> gacha faollashtirildi."
 ADMIN_PREMIUM_REMOVED_DONE = "💎 {name} dan premium olindi."
+ADMIN_USER_IS_ADMIN = "⚠️ Admin/ega huquqli foydalanuvchini banlash mumkin emas."
+ADMIN_AWAITING_TEXT = "📝 <b>Nusxalangan xabar ko'rsatilmoqda</b>\n\nYangi matn yuboring — shu xabar saqlanadi."
+ADMIN_TEXT_UPDATED = "✅ Saqlangan xabar matni yangilandi."
+ADMIN_TEXT_MISSING = "⚠️ Bu foydalanuvchidan hali nusxalangan xabar yo'q."
+ADMIN_TEXT_REMOVED = "🗑 Saqlangan xabar o'chirildi."
+ADMIN_LIMIT_SET = "⏳ {name} uchun kunlik cheklov: <b>{n} xabar</b>."
+ADMIN_LIMIT_OFF = "⏳ {name} uchun cheklov OLIB TASHLANDI (cheksiz)."
+ADMIN_LIMIT_INVALID = "⚠️ Raqam yuboring (masalan <code>50</code>) yoki <code>0</code> — cheklovsiz."
+ADMIN_LIMIT_PARSING_FAILED = "⚠️ Cheklovni qo'llashda xatolik — qaytadan urinib ko'ring."
+ADMIN_LIMIT_ASK = (
+    "⏳ <b>Kunlik limit</b>\n\n"
+    "{user} kuniga nechta xabar nusxalansin?\n"
+    "Raqam yuboring (masalan <code>50</code>). <code>0</code> — cheklovsiz."
+)
+ADMIN_PREMIUM_LIMIT_DENIED = (
+    "💎 Bu foydalanuvchida PREMIUM faol — limit qo'yish maqsiz. "
+    "Avval obunani oling."
+)
+ADMIN_TEXT_ONLY = "⚠️ Iltimos, MATN yuboring (stiker/rasm emas)."
+ADMIN_USER_NOT_REGISTERED = "⚠️ Bu foydalanuvchi hali botga /start qilmagan."
 
 # -- ommaviy xabar ------------------------------------------------------------
 ADMIN_BROADCAST_ASK = (

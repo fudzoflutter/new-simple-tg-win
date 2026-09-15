@@ -100,9 +100,9 @@ class EmojiConfig:
     report_user: EmojiEntry = field(default_factory=lambda: EmojiEntry("6145672251489391716", "👤"))
     report_id: EmojiEntry = field(default_factory=lambda: EmojiEntry("5837071798935492251", "🆔"))
     report_text: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "📝"))
-    report_old: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "📱"))
-    report_new: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "📲"))
-    report_caption: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "💬"))
+    report_old: EmojiEntry = field(default_factory=lambda: EmojiEntry("5879841310902324730", "📱"))
+    report_new: EmojiEntry = field(default_factory=lambda: EmojiEntry("5467523423989144592", "📲"))
+    report_caption: EmojiEntry = field(default_factory=lambda: EmojiEntry("5443038326535759644", ""))
     report_chat: EmojiEntry = field(default_factory=lambda: EmojiEntry("5443038326535759644", "💬"))
     report_clock: EmojiEntry = field(default_factory=lambda: EmojiEntry("5787488119490088755", "🕒"))
 

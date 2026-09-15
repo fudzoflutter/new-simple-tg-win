@@ -41,7 +41,13 @@ async def start_broadcast(cb: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(F.data == admin_kb.CB_CANCEL)
 async def cancel_wizard(cb: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    await cb.message.edit_text(texts.BROADCAST_CANCELLED, reply_markup=admin_kb.panel())
+    await cb.message.edit_text(
+        texts.BROADCAST_CANCELLED,
+        reply_markup=admin_kb.panel(
+            pending_payments=len(await db.pending_payments()),
+            premium_enabled=(await db.get_setting_cached("premium_enabled", "0")) == "1",
+        ),
+    )
     await cb.answer()
 
 

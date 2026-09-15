@@ -21,6 +21,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("BOT_TOKEN", "123456:TEST-TOKEN")
 os.environ.setdefault("ADMIN_ID", "111111111")
+# env.txt haqiqiy kalitlarni o'z ichiga oladi — testlar uni o'qimasin.
+os.environ.setdefault("CODEBUFF_SKIP_ENV_FILE", "1")
 
 from app.keyboards import admin_kb, user_kb  # noqa: E402
 from app.utils import texts  # noqa: E402

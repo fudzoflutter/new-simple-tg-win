@@ -120,6 +120,18 @@ class FakeDB:
         self.events: list[dict] = []
         self._next_id = 1
 
+    # -- parallel helper + settings (limit disabled by default) -------------
+    async def gather(self, *aws: Any) -> list[Any]:
+        return list(await asyncio.gather(*aws))
+
+    async def get_setting_cached(self, key: str, default: str = "") -> str:
+        return default  # limit:{id} default "0" = unlimited
+
+    async def count_user_events_since(
+        self, user_id: int, since: Any, event_types: Optional[list[str]] = None
+    ) -> int:
+        return 0  # limit check always passes in this test
+
     # -- connections/users (static: owner approved, partner known) ---------
     async def get_connection(self, cid: str) -> Optional[dict]:
         return {

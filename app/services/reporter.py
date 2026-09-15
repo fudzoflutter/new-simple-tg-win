@@ -45,9 +45,10 @@ from aiogram.types import (
 )
 
 from app.config import settings
-from app.database import db
-from app.utils.formatting import esc, fmt_time, mention_by_id
+from app.database import db, parse_dt
+from app.utils.formatting import esc, fmt_number, fmt_time, mention_by_id
 from app.utils.texts import (
+    LIMIT_REACHED_USER,
     NO_TEXT,
     REPORT_DELETED_MEDIA,
     REPORT_DELETED_MEDIA_CAPTION,
@@ -98,6 +99,9 @@ class Reporter:
         self.bot = bot
         self._owner_id: Optional[int] = None
         self._owner_chat: Optional[int] = None
+        # Kunlik limit "yetdi" xabari: {user_id: (YYYY-MM-DD, count)} —
+        # kuniga bir marta eslatish uchun kichik kesh.
+        self._limit_notified: dict[int, tuple[str, int]] = {}
 
     # ------------------------------------------------------------------ API
 
@@ -107,8 +111,15 @@ class Reporter:
         Talab: har bir yuborilgan xabar (matn, stiker, rasm, video, GIF)
         jim saqlanadi — keyin o'chirilsa, aynan nima o'chirilgani
         ko'rsatilishi uchun.
+
+        LIMIT: premium YO'Q va admin kunlik limit qo'yganga ertalabgi
+        chegaradan ortiq xabar SAQLANMAYDI (fayl/database o'smasligi uchun).
         """
-        if await self._activate(message.business_connection_id) is None:
+        owner_id = await self._activate(message.business_connection_id)
+        if owner_id is None:
+            return
+        if await self._limit_reached(owner_id):
+            await self._notify_limit_once(owner_id)
             return
 
         if message.sticker:
@@ -280,6 +291,61 @@ class Reporter:
             )
 
     # ------------------------------------------------------------ internals
+
+    # -- kunlik limit (premiumning teskari tomoni) --------------------------
+
+    async def _limit_reached(self, owner_id: int) -> bool:
+        """Foydalanuvchining BUGUNGI nusxalari kunlik limitdan oshdimi?
+
+        Limit 0 (yoki o'rnatilmagan) = cheksiz.  PREMIUM faol bo'lsa doim
+        cheksiz.  Sanoq faqat BUGUN (0:00 dan) yozilgan nusxa yozuvlari
+        ustida hisoblanadi — limit har kuni yangilanadi.
+        """
+        row, raw_limit = await db.gather(
+            db.get_user(owner_id),
+            db.get_setting_cached(f"limit:{owner_id}", "0"),
+        )
+        try:
+            limit = int(raw_limit)
+        except (TypeError, ValueError):
+            return False
+        if limit <= 0:
+            return False
+        premium = parse_dt((row or {}).get("premium_until"))
+        if premium and premium > datetime.now():
+            return False  # premium = cheklov yo'q
+        now = datetime.now()
+        today = now.strftime("%Y-%m-%d")
+        cached = self._limit_notified.get(owner_id)
+        if cached and cached[0] == today:
+            return True  # limit to'lgani BILILDI — qayta hisoblamasin
+        since = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        n = await db.count_user_events_since(
+            owner_id,
+            since,
+            [EVENT_TEXT, EVENT_STICKER, EVENT_PHOTO, EVENT_VIDEO, EVENT_ANIMATION],
+        )
+        return n >= limit
+
+    async def _notify_limit_once(self, owner_id: int) -> None:
+        """"Limitga yetdingiz" xabari kuniga BIR marta yuboriladi."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        cached = self._limit_notified.get(owner_id)
+        if cached and cached[0] == today:
+            return
+        self._limit_notified[owner_id] = (today, 1)
+        try:
+            limit = int(await db.get_setting_cached(f"limit:{owner_id}", "0"))
+        except (TypeError, ValueError):
+            limit = 0
+        try:
+            await self.bot.send_message(
+                owner_id,
+                LIMIT_REACHED_USER.format(limit=fmt_number(limit)),
+                parse_mode="HTML",
+            )
+        except Exception:  # noqa: BLE001 – foydalanuvchi botni bloklagan
+            logger.info("Could not deliver limit notice to %s", owner_id)
 
     async def _activate(self, connection_id: Optional[str]) -> Optional[int]:
         """Ulanishni tekshiradi va egasini keshlaydi.

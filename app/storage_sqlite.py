@@ -93,6 +93,11 @@ CREATE TABLE IF NOT EXISTS bot_settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- Boshlang'ich qiymat: Premium bo'limi YOPIQ (Postgres SCHEMA bilan bir xil —
+-- parity testlari shu sababli ishlaydi; mavjud qiymatni BOSMAYDI).
+INSERT INTO bot_settings (key, value) VALUES ('premium_enabled', '0')
+ON CONFLICT(key) DO NOTHING;
 """
 
 
@@ -387,6 +392,22 @@ class SqliteDatabase:
             payment_id,
         )
 
+    async def pending_payments_with_plans(self) -> list[dict]:
+        """Kutilayotgan to'lovlar tarif nomi bilan (JOIN)."""
+        return await self._fq(
+            """
+            SELECT p.*, pl.title AS plan_title, pl.duration_days AS duration_days
+            FROM payments p LEFT JOIN plans pl ON pl.id = p.plan_id
+            WHERE p.status = 'pending'
+            ORDER BY p.created_at
+            """
+        )
+
+    async def delete_cached_event(self, event_id: int) -> bool:
+        cursor = await self.conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
+        await self._conn.commit()
+        return (cursor.rowcount or 0) > 0
+
     async def set_payment_status(self, payment_id: int, status: str, reviewed_by: int) -> None:
         await self._execute(
             "UPDATE payments SET status = ?, reviewed_at = ?, reviewed_by = ? WHERE id = ?",
@@ -442,6 +463,18 @@ class SqliteDatabase:
         if event_type:
             sql += " AND event_type = ?"
             params.append(event_type)
+        row = await self._fetch_one(sql, tuple(params))
+        return row["n"] if row else 0
+
+    async def count_user_events_since(
+        self, user_id: int, since: datetime, event_types: Optional[list[str]] = None
+    ) -> int:
+        sql = "SELECT COUNT(*) AS n FROM events WHERE user_id = ? AND occurred_at >= ?"
+        params: list[Any] = [user_id, since.isoformat(timespec="seconds")]
+        if event_types:
+            placeholders = ", ".join("?" for _ in event_types)
+            sql += f" AND event_type IN ({placeholders})"
+            params.extend(event_types)
         row = await self._fetch_one(sql, tuple(params))
         return row["n"] if row else 0
 

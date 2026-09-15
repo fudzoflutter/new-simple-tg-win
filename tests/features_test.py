@@ -27,6 +27,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ["BOT_TOKEN"] = "123456:TEST-TOKEN"
 os.environ["ADMIN_ID"] = "111111111"
+# env.txt loyihaning HAQIQIY kalitlarini o'z ichiga oladi (BOT_TOKEN,
+# SUPABASE_DB_URL...).  Testlardan OLDIN uni yopamiz — aks holda app.config
+# uni o'qib olib, testlar PRODUCTION Supabasega yozib yuboradi.
+os.environ["CODEBUFF_SKIP_ENV_FILE"] = "1"
 
 # Part A/B use the REAL sqlite backend in a temp file.
 _tmpdir = tempfile.mkdtemp(prefix="bot_features_test_")

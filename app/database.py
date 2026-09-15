@@ -267,6 +267,14 @@ class Database:
     async def payment_with_plan(self, payment_id: int) -> Optional[dict]:
         return await self._backend.payment_with_plan(payment_id)
 
+    async def pending_payments_with_plans(self) -> list[dict]:
+        """Kutilayotgan to'lovlar + tarif NOMI (JOIN) — panel ro'yxati uchun."""
+        return await self._backend.pending_payments_with_plans()
+
+    async def delete_cached_event(self, event_id: int) -> bool:
+        """Keshlangan xabar yozuvini o'chiradi (admin paneldagi "Nusxani o'chirish")."""
+        return await self._backend.delete_cached_event(event_id)
+
     async def set_payment_status(self, payment_id: int, status: str, reviewed_by: int) -> None:
         await self._backend.set_payment_status(payment_id, status, reviewed_by)
 
@@ -294,6 +302,12 @@ class Database:
 
     async def count_user_events(self, user_id: int, event_type: Optional[str] = None) -> int:
         return await self._backend.count_user_events(user_id, event_type)
+
+    async def count_user_events_since(
+        self, user_id: int, since: datetime, event_types: Optional[list[str]] = None
+    ) -> int:
+        """Foydalanuvchining `since` dan keyingi hodisalari (kunlik limit uchun)."""
+        return await self._backend.count_user_events_since(user_id, since, event_types)
 
     async def get_event_by_message(self, chat_id: int, message_id: int) -> Optional[dict]:
         return await self._backend.get_event_by_message(chat_id, message_id)
@@ -710,6 +724,23 @@ class PostgresDatabase:
             payment_id,
         )
 
+    async def pending_payments_with_plans(self) -> list[dict]:
+        """Kutilayotgan to'lovlar tarif nomi bilan (bitta JOIN so'rovi)."""
+        return await self._fetch_all(
+            """
+            SELECT p.*, pl.title AS plan_title, pl.duration_days AS duration_days
+            FROM payments p LEFT JOIN plans pl ON pl.id = p.plan_id
+            WHERE p.status = 'pending'
+            ORDER BY p.created_at
+            """
+        )
+
+    async def delete_cached_event(self, event_id: int) -> bool:
+        n = await self._fetchval(
+            "DELETE FROM events WHERE id = $1 RETURNING 1", event_id
+        )
+        return bool(n)
+
     async def set_payment_status(self, payment_id: int, status: str, reviewed_by: int) -> None:
         await self._execute(
             "UPDATE payments SET status = $1, reviewed_at = $2, reviewed_by = $3 WHERE id = $4",
@@ -773,6 +804,16 @@ class PostgresDatabase:
         if event_type:
             params.append(event_type)
             sql += f" AND event_type = ${len(params)}"
+        return int(await self._fetchval(sql, *params))
+
+    async def count_user_events_since(
+        self, user_id: int, since: datetime, event_types: Optional[list[str]] = None
+    ) -> int:
+        sql = "SELECT COUNT(*) FROM events WHERE user_id = $1 AND occurred_at >= $2"
+        params: list[Any] = [user_id, since.isoformat(timespec="seconds")]
+        if event_types:
+            params.append(list(event_types))
+            sql += f" AND event_type = ANY(${len(params)})"
         return int(await self._fetchval(sql, *params))
 
     async def get_event_by_message(

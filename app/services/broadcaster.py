@@ -73,7 +73,7 @@ class Broadcaster:
                     result.sent += 1
                 except Exception:  # noqa: BLE001 – qayta urinish ham yiqildi
                     result.skipped += 1
-            except Exception:  # noqa: BLE001 – count, do not crash
+            except Exception as exc:  # noqa: BLE001 – count, do not crash
                 logger.debug("copy_message failed for %s: %s", user_id, exc)
                 if await self._fallback_send(from_chat_id, message_id, user_id):
                     result.sent += 1

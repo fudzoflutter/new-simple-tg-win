@@ -40,6 +40,12 @@ CB_BACK_MENU = "user:menu"  # foydalanuvchi tomoni bilan umumiy
 # -- Premium bo'limini yoqish/o'chirish (yangi talab) -------------------------
 CB_PREMIUM_TOGGLE = "adm:premium:toggle"
 
+# Foydalanuvchi kartochkasi qo'shimcha boshqaruvi (yangi funksiyalar).
+CB_USER_TEXT_VIEW = "adm:text:view:"
+CB_USER_TEXT_SET = "adm:text:set:"
+CB_USER_TEXT_DEL = "adm:text:del:"
+CB_USER_LIMIT = "adm:limit:"
+
 PAGE_SIZE = 5
 
 
@@ -135,7 +141,12 @@ def user_buttons(pairs: list[tuple[str, int]]) -> list[list]:
 
 
 def user_card(user_id: int, banned: bool, premium_active: bool = False) -> InlineKeyboardMarkup:
-    """Profil havolasi + obuna berish/olish + cheklash (5-band + yangi talab)."""
+    """Profil havolasi + obuna berish/olish + cheklash + qo'shimcha boshqaruv.
+
+    Premium (obuna) faol bo'lsa — foydalanuvchining o'ziga to'liq boshqaruv
+    beriladi: saqlangan xabarni ko'rish, almashtirish, o'chirish va kunlik
+    limitni o'rnatish/olib tashlash (limit = premiumning teskari tomoni).
+    """
     rows = [
         [
             btn(
@@ -151,6 +162,20 @@ def user_card(user_id: int, banned: bool, premium_active: bool = False) -> Inlin
         rows.append(
             [btn("🗑 Obunani olib qo'yish", f"{CB_USER_PREM_OFF}{user_id}", style=BtnStyle.DANGER)]
         )
+    else:
+        # Premium YO'Q foydalanuvchiga ishlash hajmini cheklash mumkin
+        # ("premium giving gift" teskari tomoni — ishlashni limitlash).
+        rows.append(
+            [btn("⏳ Kunlik limit o'rnatish", f"{CB_USER_LIMIT}{user_id}", style=BtnStyle.PRIMARY)]
+        )
+    # Nusxalangan xabar boshqaruvi (har qanday foydalanuvchi uchun mavjud).
+    rows.append(
+        [
+            btn("📝 Nusxa ko'rish", f"{CB_USER_TEXT_VIEW}{user_id}", style=BtnStyle.PRIMARY),
+            btn("♻️ Almashtirish", f"{CB_USER_TEXT_SET}{user_id}", style=BtnStyle.SUCCESS),
+        ]
+    )
+    rows.append([btn("🗑 Nusxani o'chirish", f"{CB_USER_TEXT_DEL}{user_id}", style=BtnStyle.DANGER)])
     if banned:
         rows.append([btn("✅ Bandan chiqarish", f"{CB_USER_UNBAN}{user_id}", style=BtnStyle.SUCCESS)])
     else:
@@ -251,3 +276,21 @@ def broadcast_confirm() -> InlineKeyboardMarkup:
 
 def cancel_to_panel() -> InlineKeyboardMarkup:
     return kb([[btn("🔙 Bekor qilish", CB_CANCEL, style=BtnStyle.DANGER, emoji_id=EMOJI.menu_back.emoji_id)]])
+
+
+def user_text_view(user_id: int, has_text: bool) -> InlineKeyboardMarkup:
+    """Saqlangan xabar ko'rish ekrani: almashtirish / o'chirish / orqaga."""
+    rows = [
+        [btn("♻️ Almashtirish", f"{CB_USER_TEXT_SET}{user_id}", style=BtnStyle.SUCCESS)],
+    ]
+    if has_text:
+        rows.append(
+            [btn("🗑 Nusxani o'chirish", f"{CB_USER_TEXT_DEL}{user_id}", style=BtnStyle.DANGER)]
+        )
+    rows.append([btn("🔙 Kartochkaga", f"{CB_USER}{user_id}", style=BtnStyle.DANGER, emoji_id=EMOJI.menu_back.emoji_id)])
+    return kb(rows)
+
+
+def cancel_to_user_card(user_id: int) -> InlineKeyboardMarkup:
+    """FSM so'rovlarini bekor qilib foydalanuvchi kartochkasiga qaytish."""
+    return kb([[btn("🔙 Bekor qilish", f"{CB_USER}{user_id}", style=BtnStyle.DANGER, emoji_id=EMOJI.menu_back.emoji_id)]])
