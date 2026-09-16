@@ -60,6 +60,7 @@ from app.utils.texts import (
     REPORT_EDIT,
     REPORT_FOOTER,
     REPORT_FOOTER_DELETED,
+    REPORT_UNCACHED,
     TRUNCATED,
     UNKNOWN_CHAT,
     WHO_UNKNOWN,
@@ -72,6 +73,13 @@ logger = logging.getLogger(__name__)
 MAX_TEXT = 350
 MAX_TITLE = 64
 MAX_BULK_DELETES = 10  # bir vaqtda o'chirilgan xabarlar ustidagi cheklov
+
+# Keshda topilmagan o'chirishlar haqida ogohlantirish oralig'i (sekund).
+# Bunday holat jimgina o'tkazib yuborilardi — foydalanuvchi "ovoz/dumaloq video
+# kelmadi" deb ko'rardi, sababi esa ko'rinmasdi.  Endi 15 daqiqada ko'pi bilan
+# bir marta xabar beriladi (shovqin qilmasligi uchun).
+UNCACHED_WARNING_INTERVAL = 900
+_last_uncached_warning = 0.0
 
 # ---------------------------------------------------------------------------
 # Hodisa turlari (DB qiymatlari)
@@ -143,6 +151,71 @@ def invalidate_connection(connection_id: Optional[str] = None) -> None:
         _connection_cache.pop(connection_id, None)
 
 
+# ---------------------------------------------------------------------------
+# TEZKOR KESH (xotira) — "darhol o'chirish" muammosining yechimi.
+#
+# aiogram update'larni PARALLEL bajaradi (handle_as_tasks=True): har bir
+# update uchun alohida task ochiladi.  Supabase ~1.2 s uzoqda bo'lgani uchun
+# xabarni keshlash (INSERT) tugagunicha bir necha sekund o'tadi.  Agar
+# suhbatdosh xabarni YUBORIB DARHOL o'chirsa, o'chirish yangilamasi kesh
+# yozuvidan OLDIN tekshiriladi va xabar "keshda yo'q" bo'lib tuyuladi —
+# hisobot JIM o'tib ketadi (ovozli xabar / dumaloq video / rasm...).
+#
+# Shu sababli mazmun HECH QANDAY await'siz, xabarni qabul qilishning ENG
+# BIRINCHI qadamida xotiradagi lug'atga yoziladi.  O'chirish hisoboti
+# shu yozuvdan foydalanadi — DB yozuvi esa odatdagidek (statistika va
+# qayta ishga tushishdan keyin ham ishlashi uchun) fonda davom etadi.
+#
+# Xotira chegaralangan: eng eski yozuvlar chiqib ketadi (DB — asosiy kesh).
+# ---------------------------------------------------------------------------
+INSTANT_CACHE_MAX = 5_000
+
+# (chat_id, message_id) -> {event_type, details, sender_id, chat_title}
+_instant_cache: dict[tuple[int, int], dict] = {}
+
+
+def remember(
+    chat_id: Optional[int],
+    message_id: Optional[int],
+    event_type: str,
+    details: str,
+    *,
+    sender_id: Optional[int] = None,
+    chat_title: str = UNKNOWN_CHAT,
+) -> None:
+    """Xabar mazmunini XOTIRAGA DARHOL yozadi (await YO'Q, I/O YO'Q).
+
+    Bu funksiya ataylab sinxron: chaqiruvchi handler'ning birinchi qadamida
+    ishlaydi, shuning uchun tez o'chirilgan xabar ham hisobotdan qolmaydi.
+    """
+    if not chat_id or not message_id:
+        return
+    key = (int(chat_id), int(message_id))
+    # Qayta yozilsa — eng oxiriga o'tadi (FIFO chegarasi to'g'ri ishlashi uchun).
+    _instant_cache.pop(key, None)
+    _instant_cache[key] = {
+        "event_type": event_type,
+        "details": details,
+        "sender_id": sender_id,
+        "chat_title": chat_title,
+    }
+    while len(_instant_cache) > INSTANT_CACHE_MAX:
+        oldest = next(iter(_instant_cache))
+        _instant_cache.pop(oldest, None)
+
+
+def recall(chat_id: Optional[int], message_id: Optional[int]) -> Optional[dict]:
+    """Xotiradagi keshlan mazmun (topilmasa ``None``)."""
+    if not chat_id or not message_id:
+        return None
+    return _instant_cache.get((int(chat_id), int(message_id)))
+
+
+def clear_instant_cache() -> None:
+    """Tezkor keshni tozalash (testlar / qayta yuklash uchun)."""
+    _instant_cache.clear()
+
+
 class Reporter:
     """Faoliyat hisobotlarini ULANISH EGASIGA yetkazadi (qoidalar yuqorida)."""
 
@@ -160,61 +233,26 @@ class Reporter:
         ovozli xabar, dumaloq video) jim saqlanadi — keyin o'chirilsa,
         aynan nima o'chirilgani ko'rsatilishi uchun.
         """
+        # 1) ENG BIRINCHI QADAM, AWAIT'SIZ: mazmunni xotiraga yozamiz.
+        #    Sabab: aiogram update'larni parallel bajaradi — suhbatdosh
+        #    xabarni yuborib DARHOL o'chirsa, o'chirish yangilamasi shu
+        #    funksiyaning DB yozuvidan (~1.2 s) OLDIN ishlanadi.  Xotiradagi
+        #    yozuv tufayli hisobot baribir to'g'ri chiqadi.
+        event_type, details = self._content_of(message)
+        remember(
+            message.chat.id if message.chat else None,
+            message.message_id,
+            event_type,
+            details,
+            sender_id=message.from_user.id if message.from_user else None,
+            chat_title=self._chat_name(message),
+        )
+
+        # 2) DBga (asosiy kesh) yozish — statistika va restart uchun.
         owner_id = await self._activate(message.business_connection_id)
         if owner_id is None:
             return
-
-        if message.sticker:
-            await self._store(
-                message, EVENT_STICKER,
-                self._media_details(message.sticker.file_id, EVENT_STICKER),
-            )
-            return
-        if message.animation:  # GIF
-            await self._store(
-                message, EVENT_ANIMATION,
-                self._media_details(
-                    message.animation.file_id, EVENT_ANIMATION, message.caption
-                ),
-            )
-            return
-        if message.photo:
-            await self._store(
-                message, EVENT_PHOTO,
-                self._media_details(
-                    message.photo[-1].file_id, EVENT_PHOTO, message.caption
-                ),
-            )
-            return
-        if message.video:
-            await self._store(
-                message, EVENT_VIDEO,
-                self._media_details(
-                    message.video.file_id, EVENT_VIDEO, message.caption
-                ),
-            )
-            return
-        if message.voice:
-            await self._store(
-                message, EVENT_VOICE,
-                self._media_details(
-                    message.voice.file_id, EVENT_VOICE, message.caption
-                ),
-            )
-            return
-        if message.video_note:  # dumaloq (circular) video
-            await self._store(
-                message, EVENT_VIDEO_NOTE,
-                self._media_details(
-                    message.video_note.file_id, EVENT_VIDEO_NOTE
-                ),
-            )
-            return
-
-        # oddiy matn
-        await self._store(
-            message, EVENT_TEXT, message.text or message.caption or NO_TEXT
-        )
+        await self._store(message, event_type, details)
 
     async def report_edited(self, message: Message) -> None:
         """edited_business_message — faqat suhbatdosh MATN tahriri haqida.
@@ -230,6 +268,13 @@ class Reporter:
 
         chat_id = message.chat.id if message.chat else 0
         stored = await db.get_event_by_message(chat_id, message.message_id)
+        # Xotiradagi tezkor kesh ham manba bo'la oladi (yozuv hali bazaga
+        # tushmagan bo'lsa — "darhol tahrirlash" holati).
+        record = stored or recall(chat_id, message.message_id)
+        # ESKI mazmun SHU YERDA o'qib olinadi: quyida kesh yangilanadi.
+        old_text = (
+            self._plain_content(record.get("details") or "") if record else NO_TEXT
+        )
         is_media = self._has_media(message)
 
         # 1) Keshni har doim yangilaymiz — keyingi o'chirish hisoboti shunga
@@ -261,9 +306,6 @@ class Reporter:
         sender = message.from_user
         if is_media or sender is None or sender.id == owner_id:
             return
-        old_text = (
-            self._plain_content(stored.get("details") or "") if stored else NO_TEXT
-        )
         new_text = message.text or message.caption or NO_TEXT
         body = REPORT_EDIT.format(
             who=self._who_from_user(sender),
@@ -272,6 +314,33 @@ class Reporter:
         )
         await self._send(
             self._owner_chat, body + self._footer(self._chat_name(message))
+        )
+
+    async def _warn_uncached(
+        self, chat_title: str, missed: list[int], deleted_hms: str
+    ) -> None:
+        """Keshda topilmagan o'chirishlar haqida ogohlantiradi (15 daqiqada 1).
+
+        Bu holatda hisobot UMUMAN chiqmaydi — jim qolsa, foydalanuvchi
+        "ovoz/dumaloq video qaytmadi" deb ko'radi, sababi esa ko'rinmaydi.
+        Shuning uchun sabab aytiladi: xabarni boshqa nusxa (eski build) qabul
+        qilgan yoki xabar bot ishga tushishidan oldin yuborilgan.
+        """
+        global _last_uncached_warning
+        if not missed or not self._owner_chat:
+            return
+        now = time.monotonic()
+        if _last_uncached_warning and now - _last_uncached_warning < UNCACHED_WARNING_INTERVAL:
+            return  # shovqin qilmaymiz
+        _last_uncached_warning = now
+        await self._send(
+            self._owner_chat,
+            REPORT_UNCACHED.format(
+                chat=esc(chat_title),
+                ids=", ".join(str(m) for m in missed[:MAX_BULK_DELETES]),
+                count=len(missed),
+                time=deleted_hms,
+            ),
         )
 
     async def report_deleted(self, deleted: BusinessMessagesDeleted) -> None:
@@ -301,23 +370,34 @@ class Reporter:
         chat_id = chat.id if chat else 0
         chat_title = self._chat_title_of(chat)
 
+        missed: list[int] = []
         for mid in deleted.message_ids[:MAX_BULK_DELETES]:
             stored = await db.get_event_by_message(chat_id, mid)
+            # Baza yozuvi hali tugamagan bo'lsa (tez o'chirish) — xotiradagi
+            # tezkor keshlga tayanamiz; aks holda xabar "keshda yo'q" bo'lib
+            # ko'rinib, hisobot umuman kelmasdi.
+            record = stored or recall(chat_id, mid)
 
-            if not stored:
-                # Keshda yo'q: ulanishdan OLDIN yuborilgan yoki egasining o'z
-                # xabari.  Kimga tegishliligini bilolmaymiz — shovqinsiz.
-                logger.info("Delete skipped: message %s is not cached", mid)
+            if not record:
+                # Keshda yo'q: BOSHQA nusxa qabul qilgan yoki xabar bot ishga
+                # tushishidan oldin yuborilgan.  Bu JIM o'tkazib yuborilmaydi:
+                # aks holda "ovoz/dumaloq video kelmadi" ning sababi ko'rinmaydi.
+                logger.warning(
+                    "Delete skipped: message %s is not cached (chat=%s)",
+                    mid,
+                    chat_id,
+                )
+                missed.append(mid)
                 continue
-            sender_id = stored.get("sender_id")
+            sender_id = record.get("sender_id")
             # Eganing o'z xabari yoki admin o'chirgan istalgan xabar — hisobot YO'Q
             if sender_id and (int(sender_id) == owner_id or int(sender_id) == settings.admin_id):
                 continue  # hisobot YO'Q (talab)
 
-            event_type = stored.get("event_type") or EVENT_TEXT
-            details = stored.get("details") or ""
+            event_type = record.get("event_type") or EVENT_TEXT
+            details = record.get("details") or ""
             label = KIND_LABELS.get(event_type, KIND_LABELS[EVENT_TEXT])
-            who = await self._who_for_delete(chat, stored)
+            who = await self._who_for_delete(chat, record)
 
             if event_type == EVENT_TEXT:
                 # 1) MATN: to'liq asl matn ko'rsatiladi.
@@ -362,6 +442,9 @@ class Reporter:
                 chat_title=chat_title,
                 message_id=None,  # asl yozuvni "soyabon" qilmasin
             )
+
+        # Keshda topilmagan id bo'lsa — bir marta ogohlantiramiz.
+        await self._warn_uncached(chat_title, missed, deleted_hms)
 
     # ------------------------------------------------------------ internals
 
@@ -449,6 +532,41 @@ class Reporter:
     def _plain_content(details: str) -> str:
         """Matn yozuvidan xom matnni oladi (escape holda emas)."""
         return details
+
+    def _content_of(self, message: Message) -> tuple[str, str]:
+        """Xabar TURI va keshlanadigan mazmuni (SOF SINXRON — await yo'q).
+
+        * media -> ``("photo", "file:<file_id>|photo|<izoh>")`` va h.k.
+        * matn  -> ``("text", "<asl matn>")``
+
+        Tartib ``report_incoming`` bilan bir xil: stiker, GIF, rasm, video,
+        ovozli xabar, dumaloq video, keyin matn.
+        """
+        if message.sticker:
+            return EVENT_STICKER, self._media_details(
+                message.sticker.file_id, EVENT_STICKER
+            )
+        if message.animation:  # GIF
+            return EVENT_ANIMATION, self._media_details(
+                message.animation.file_id, EVENT_ANIMATION, message.caption
+            )
+        if message.photo:
+            return EVENT_PHOTO, self._media_details(
+                message.photo[-1].file_id, EVENT_PHOTO, message.caption
+            )
+        if message.video:
+            return EVENT_VIDEO, self._media_details(
+                message.video.file_id, EVENT_VIDEO, message.caption
+            )
+        if message.voice:
+            return EVENT_VOICE, self._media_details(
+                message.voice.file_id, EVENT_VOICE, message.caption
+            )
+        if message.video_note:  # dumaloq (circular) video
+            return EVENT_VIDEO_NOTE, self._media_details(
+                message.video_note.file_id, EVENT_VIDEO_NOTE
+            )
+        return EVENT_TEXT, (message.text or message.caption or NO_TEXT)
 
     @staticmethod
     def _has_media(message: Message) -> bool:
@@ -655,6 +773,15 @@ class Reporter:
             chat_title=self._chat_name(message),
             message_id=message.message_id,
             sender_id=message.from_user.id if message.from_user else None,
+        )
+        # Tezkor keshni ham bir xil holatga keltiramiz (manba bitta bo'lsin).
+        remember(
+            message.chat.id if message.chat else None,
+            message.message_id,
+            event_type,
+            details,
+            sender_id=message.from_user.id if message.from_user else None,
+            chat_title=self._chat_name(message),
         )
 
     async def _store_stat(

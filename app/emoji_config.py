@@ -102,6 +102,8 @@ class EmojiConfig:
     report_new: EmojiEntry = field(default_factory=lambda: EmojiEntry("5467523423989144592", "📲"))
     report_chat: EmojiEntry = field(default_factory=lambda: EmojiEntry("5443038326535759644", "💬"))
     report_clock: EmojiEntry = field(default_factory=lambda: EmojiEntry("5787488119490088755", "🕒"))
+    # Diagnostika: o'chirilgan xabar keshda umuman topilmadi (hisobot chiqmaydi).
+    report_missed: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "⚠️"))
 
     # ------------------------------------------------------------------
     # HOLAT BELGILARI (oddiy emoji — semantik)
@@ -172,6 +174,10 @@ class EmojiConfig:
     @property
     def clock(self) -> str:
         return self.report_clock.tag
+
+    @property
+    def missed(self) -> str:
+        return self.report_missed.tag
 
 
 EMOJI = EmojiConfig()

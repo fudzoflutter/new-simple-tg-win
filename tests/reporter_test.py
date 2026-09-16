@@ -27,6 +27,10 @@ It plugs a FakeBot + FakeDB into Reporter and checks the STRICT rules:
 13. O'CHIRILISH VAQTI — hisobotlarda Toshkent (UTC+5) vaqtida ko'rsatiladi
     (server UTC bo'lsa ham 5 soatga surilmaydi), bir update uchun BIR MARTA
     olinadi va sekin DB/fayl yuklash uni o'zgartirib yubormaydi.
+14. TEZ O'CHIRISH (asosiy xato): suhbatdosh xabarni yuborib DARHOL o'chirsa,
+    o'chirish yangilamasi DB kesh yozuvidan OLDIN ishlanadi (aiogram
+    update'larni parallel bajaradi).  Xotiradagi tezkor kesh tufayli hisobot
+    baribir chiqadi — matn ham, ovozli xabar ham, dumaloq video ham.
 """
 
 from __future__ import annotations
@@ -42,7 +46,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from aiogram.types import Update  # noqa: E402
 
 from app.services import reporter as rep  # noqa: E402
-from app.services.reporter import Reporter, invalidate_connection  # noqa: E402
+from app.services.reporter import (  # noqa: E402
+    Reporter,
+    clear_instant_cache,
+    invalidate_connection,
+)
 
 OWNER_ID = 1000
 PARTNER_ID = 2000
@@ -330,10 +338,31 @@ async def run_all() -> None:
     assert [k for k, _ in r8.bot.sent] == ["video_note", "message"], r8.bot.sent
     assert "Video note o'chirildi" in r8.bot.sent[1][1]
 
-    # Scenario D: uncached (pre-connect) deletes are silent.
+    # Scenario D: uncached (pre-connect) deletes produce NO report — lekin jim
+    # ham qolmaydi: nega hisobot yo'qligini aytadigan BITTA diagnostika
+    # xabari boradi (15 daqiqa oralig'ida takrorlanmaydi).
+    #
+    # Sabab: bu nusxa xabarni umuman ko'rmagan — demak uni boshqa nusxa
+    # (eski build / server) qabul qilgan yoki xabar bot ishga tushishidan
+    # oldin yuborilgan.  Aynan shu holat "ovoz/dumaloq video qaytmadi"
+    # shikoyatining sababi bo'lgani uchun endi ko'rinadi.
+    rep._last_uncached_warning = 0.0
     r5 = Reporter(FakeBot())
     await r5.report_deleted(SimpleDeleted([999]))
-    assert r5.bot.sent == [], "uncached deletes must be skipped"
+    assert [k for k, _ in r5.bot.sent] == ["message"], r5.bot.sent
+    diag = r5.bot.sent[0][1]
+    assert "topilmadi" in diag and "999" in diag, diag
+    assert "🗑" not in diag, f"bu hisobot EMAS, diagnostika: {diag}"
+
+    # Takroriy ogohlantirish bo'lmaydi (shovqin qilmaslik uchun).
+    await r5.report_deleted(SimpleDeleted([998]))
+    assert len(r5.bot.sent) == 1, r5.bot.sent
+
+    # Interval o'tgach yana bir marta aytiladi.
+    rep._last_uncached_warning -= rep.UNCACHED_WARNING_INTERVAL + 1
+    await r5.report_deleted(SimpleDeleted([997]))
+    assert len(r5.bot.sent) == 2, r5.bot.sent
+    assert "997" in r5.bot.sent[1][1]
 
     # Scenario E: Who falls back to name/mention when username is missing.
     r6 = Reporter(FakeBot())
@@ -563,6 +592,88 @@ async def run_all() -> None:
     assert abs(delta - 5 * 3600) < 5, delta
 
     print("Scenario I (o'chirilish vaqti — Toshkent UTC+5, bir marta) OK ✅")
+
+    # Scenario J: TEZ O'CHIRISH — kesh yozuvi hali bazaga tushmagan bo'lsa ham
+    # hisobot chiqadi.  Bu HAQIQIY xato edi: aiogram update'larni parallel
+    # bajaradi, Supabase yozuvi esa ~1.2 s — suhbatdosh xabarni darhol
+    # o'chirsa, o'chirish yangilamasi "keshda yo'q" deb JIM o'tib ketardi
+    # (aynan foydalanuvchi shikoyati: matn keladi, ovoz/dumaloq video kelmaydi).
+    class SlowFakeDB(FakeDB):
+        """add_event sekin (Supabase ~1.2 s ni simulyatsiya qiladi)."""
+
+        async def add_event(self, *args: Any, **kwargs: Any) -> None:
+            await asyncio.sleep(0.05)
+            await super().add_event(*args, **kwargs)
+
+    def cached_rows(slow_db: "SlowFakeDB", mid: int) -> list[dict]:
+        return [e for e in slow_db.events if e["message_id"] == mid]
+
+    slow = SlowFakeDB()
+    rep.db = slow  # type: ignore[assignment]
+    invalidate_connection()
+    clear_instant_cache()
+    rj = Reporter(FakeBot())
+
+    async def start_incoming(mid: int, kw: dict) -> asyncio.Task:
+        """Xabar handler'i ISHGA TUSHADI (xotiraga yozadi), DB yozuvi esa
+        davom etmoqda.  Real hayotda ham shunday: xabar va o'chirish — alohida
+        update'lar (alohida long-poll javoblari), shuning uchun handler har
+        doim birinchi bo'lib ishga tushadi; xotiradagi yozuv esa handler'ning
+        eng birinchi (await'siz) qadamidir.
+        """
+        kw = {"from_id": PARTNER_ID, **kw}
+        task = asyncio.create_task(rj.report_incoming(FakeMessage(mid, **kw)))
+        await asyncio.sleep(0)      # task boshlandi: xotira yozildi
+        assert rep.recall(CHAT_ID, mid) is not None, "tezkor kesh darhol to'lishi kerak"
+        return task
+
+    # (a) OVOZLI XABAR: qayta yuborish tugashidan OLDIN o'chiriladi.
+    sending = await start_incoming(801, {"media": {"voice": SimplePhoto("FAST_VOICE")}})
+    assert cached_rows(slow, 801) == [], "DB yozuvi hali tugamagan bo'lishi kerak"
+    await rj.report_deleted(SimpleDeleted([801]))
+    assert rj.bot.files == [("voice", "FAST_VOICE")], (
+        f"tez o'chirilgan ovoz qayta yuborilishi kerak, {rj.bot.files}"
+    )
+    # Hisobot aynan DB yozuvi YO'Q paytda chiqdi (yuqoridagi tekshiruv +
+    # qayta yuborilgan fayl).  Orqa fondagi yozuv esa yo'qolmaydi.
+    await sending
+    assert cached_rows(slow, 801), "yozuv baribir bazaga tushadi (statistika)"
+
+    # (b) DUMALOQ VIDEO — xuddi shunday.
+    rj.bot.sent.clear()
+    rj.bot.files.clear()
+    sending = await start_incoming(802, {"media": {"video_note": SimplePhoto("FAST_NOTE")}})
+    await rj.report_deleted(SimpleDeleted([802]))
+    assert rj.bot.files == [("video_note", "FAST_NOTE")], rj.bot.files
+    assert any("Video note o'chirildi" in t for k, t in rj.bot.sent if k == "message")
+    await sending
+
+    # (c) MATN — asl matn baribir ko'rsatiladi.
+    rj.bot.sent.clear()
+    sending = await start_incoming(803, {"text": "tez o'chdi"})
+    await rj.report_deleted(SimpleDeleted([803]))
+    # Matn HTML-escape qilinadi (o' -> &#x27;), shuning uchun bo'lak bo'yicha.
+    assert any(
+        "Asl matn" in t and "tez o" in t and "chdi" in t
+        for k, t in rj.bot.sent
+        if k == "message"
+    ), rj.bot.sent
+    await sending
+
+    # (d) Egasining o'z xabari tez o'chirilsa ham JIM qoladi (talab).
+    rj.bot.sent.clear()
+    sending = await start_incoming(804, {"text": "o'zim yozdim", "from_id": OWNER_ID})
+    await rj.report_deleted(SimpleDeleted([804]))
+    assert rj.bot.sent == [], "ega o'z xabarini o'chirsa hisobot BO'LMASLIGI kerak"
+    await sending
+
+    # (e) Umuman keshda bo'lmagan xabar (aloqadan oldin yuborilgan) JIM o'tadi.
+    rj.bot.sent.clear()
+    await rj.report_deleted(SimpleDeleted([9999]))
+    assert rj.bot.sent == [], "noma'lum xabar haqida hisobot bo'lmasligi kerak"
+
+    clear_instant_cache()
+    print("Scenario J (tez o'chirish — kesh poygasi) OK ✅")
 
     print("REPORTER RULES TEST PASSED ✅  "
           "(silent sends, edit/delete-only reports, partner-only, usernames, "

@@ -30,6 +30,7 @@ E_TRASH = EMOJI.trash
 E_INFO = EMOJI.info_tag
 E_CHAT = EMOJI.chat
 E_CLOCK = EMOJI.clock
+E_MISSED = EMOJI.missed
 
 # ---------------------------------------------------------------------------
 # /start – asosiy menyu
@@ -188,6 +189,20 @@ REPORT_DELETED_MEDIA_CAPTION = (
 REPORT_FOOTER = f"\n{E_CHAT} Chat: <b>{{chat}}</b>\n{E_CLOCK} Vaqt: <b>{{time}}</b>"
 REPORT_FOOTER_DELETED = (
     f"\n{E_CHAT} Chat: <b>{{chat}}</b>\n{E_CLOCK} O'chirilgan: <b>{{time}}</b>"
+)
+
+# Diagnostika: o'chirish keldi, lekin xabar keshda YO'Q — hisobot chiqmaydi.
+# Sabab ikkitadan biri: (a) xabarni BOSHQA nusxa (eski build / server deploy)
+# qabul qilgan, (b) xabar bot ishga tushishidan oldin yuborilgan.
+# Jim qolish o'rniga admin bir marta ogohlantiriladi (reporter._warn_uncached).
+REPORT_UNCACHED = (
+    f"{E_MISSED} <b>O'chirilgan xabar keshda topilmadi</b>\n\n"
+    f"{E_CHAT} Chat: <b>{{chat}}</b>\n"
+    f"{E_ID} Xabarlar: <code>{{ids}}</code> — {{count}} ta\n"
+    f"{E_CLOCK} O'chirilgan: <b>{{time}}</b>\n\n"
+    f"<i>Bot bu xabarni umuman ko'rmagan, shuning uchun hisobot yo'q.\n"
+    f"Sabab: xabar boshqa nusxa tomonidan qabul qilingan (eski build) yoki "
+    f"bot ishga tushishidan oldin yuborilgan.</i>"
 )
 
 # Matn bo'sh yoki juda uzun bo'lganda.
