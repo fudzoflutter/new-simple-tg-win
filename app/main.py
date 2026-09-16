@@ -4,8 +4,8 @@ Application entrypoint / wiring.
 Reads top-to-bottom to understand how the bot is assembled:
 
 1. config + logging + database
-2. middlewares (registration, ban guard)
-3. routers (business first, then admin-filtered, then user)
+2. middlewares (registration)
+3. routers (business first, then user)
 4. long polling + background watchdog
 """
 
@@ -21,16 +21,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from app.config import ensure_configured, settings
 from app.database import db
-from app.filters import IsAdmin
-from app.handlers import (
-    admin_broadcast,
-    admin_panel,
-    admin_payments,
-    admin_plans,
-    business,
-    user,
-)
-from app.middlewares import AccessGuardMiddleware, RegisterUserMiddleware
+from app.handlers import business, user
+from app.middlewares import RegisterUserMiddleware
 from app.services.watchdog import run_watchdog
 from app.utils.logger import setup_logging
 
@@ -102,7 +94,7 @@ async def _drain_pending_updates(bot: Bot) -> None:
         if drained:
             logger.info(
                 "Bot o'chirik bo'lgan davrda %d ta update to'plangan bo'lib, "
-                "ular endi qayta yuborilmaydi (so'rovlar panelda ko'rinadi).",
+                "ular endi qayta yuborilmaydi (so'rovlar shu yerda ko'rinadi).",
                 len(drained),
             )
     except TelegramConflictError:
@@ -135,30 +127,15 @@ async def main() -> None:
     )
     dp = Dispatcher(storage=MemoryStorage())
 
-    # --- middlewares (run for every update, in this order) ------------------
-    # 1) RegisterUser: foydalanuvchini DBga yozadi (yangi so'rov = 'pending')
-    # 2) AccessGuard:  ban + kirish tasdiqlash tekshiruvi (yangi talab)
+    # --- middlewares (run for every update) ---------------------------------
+    # RegisterUser: foydalanuvchini DBga yozadi + faollikni yangilaydi.
     dp.update.outer_middleware(RegisterUserMiddleware())
-    dp.update.outer_middleware(AccessGuardMiddleware())
 
     # --- routers -------------------------------------------------------------
     # 1) business_* updates: connection notices + activity reports.
     dp.include_router(business.router)
 
-    # 2) admin-only screens; IsAdmin gates every handler in these routers.
-    #    Checked first so a normal user can never trigger admin callbacks.
-    admin_routers = [
-        admin_broadcast.router,  # FSM: broadcast post must win over receipts
-        admin_panel.router,
-        admin_plans.router,
-        admin_payments.router,
-    ]
-    for router in admin_routers:
-        router.message.filter(IsAdmin())
-        router.callback_query.filter(IsAdmin())
-        dp.include_router(router)
-
-    # 3) everything else (regular users) goes last.
+    # 2) regular users (menyu, statistika, havola tozalash) go last.
     dp.include_router(user.router)
 
     # --- background jobs ------------------------------------------------------

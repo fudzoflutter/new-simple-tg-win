@@ -12,7 +12,8 @@ Hisobot QOIDALARI (4-band, yangi talab):
 
 * yuborilgan xabarlar FORVARD qilinmaydi — tarkib jim KESHlanadi;
 * matn xabari           -> faqat TAHRIRLANGANDA yoki O'CHIRILGANDA xabar;
-* rasm/video/GIF/stiker -> faqat O'CHIRILGANDA xabar (fayl qayta yuboriladi);
+* media (rasm/video/GIF/stiker/ovozli xabar/dumaloq video) -> faqat
+  O'CHIRILGANDA xabar (fayl qayta yuboriladi);
 * hisobot faqat SUHBATDOSH hodisalari uchun — eganing o'z yuborgan/
   tahrirlagan/o'chirgan xabarlari hech qachon hisobot qilib berilmaydi.
 
@@ -34,7 +35,7 @@ from aiogram.types import (
 from app.config import settings
 from app.database import db
 from app.keyboards import user_kb
-from app.services.reporter import Reporter
+from app.services.reporter import Reporter, invalidate_connection
 from app.utils import texts
 
 router = Router(name="business")
@@ -47,11 +48,6 @@ def _mention(user: TgUser) -> str:
 
     name = user.first_name or user.username or str(user.id)
     return mention_by_id(user.id, name, user.username)
-
-
-async def _premium_enabled_flag() -> bool:
-    """Premium bo'limi ochiqmi (KESHLANGAN o'qish — tezlik uchun)."""
-    return (await db.get_setting_cached("premium_enabled", "0")) == "1"
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +73,10 @@ async def on_connection(connection: BusinessConnection, bot: Bot) -> None:
         is_enabled=is_enabled,
         user_chat_id=connection.user_chat_id,
     )
+    # Ulanish holati o'zgardi — in-memory keshni yangilaymiz, shunda keyingi
+    # business-update'lar DBga qayta murojaat qilmasdan TO'G'RI egasini oladi
+    # (app/services/reporter.py dagi _connection_cache).
+    invalidate_connection(connection.id)
 
     # 1) Foydalanuvchining o'ziga xabar (3-band).
     #    ULANGANLIK darhol tasdiqlanadi: birinchi ulanish — "amalga oshdi",
@@ -96,10 +96,7 @@ async def on_connection(connection: BusinessConnection, bot: Bot) -> None:
         await bot.send_message(
             notify_chat,
             f"{texts.WELCOME}\n\n{texts.MENU_HINT}",
-            reply_markup=user_kb.main_menu(
-                connected=is_enabled,
-                premium_enabled=await _premium_enabled_flag(),
-            ),
+            reply_markup=user_kb.main_menu(connected=is_enabled),
         )
     except Exception:  # noqa: BLE001 – foydalanuvchi botni bloklagan bo'lishi mumkin
         logger.info("Could not notify user %s about connection change", user.id)

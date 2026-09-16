@@ -6,8 +6,8 @@ xabarga aylantiradi.  Qoidalar QAT'IY:
 
 * yuborilgan xabarlar FORVARD QILINMAYDI — tarkib jim KESHlanadi (DBda);
 * matn xabari           -> faqat TAHRIRLANGANDA yoki O'CHIRILGANDA xabar;
-* rasm/video/GIF/stiker -> faqat O'CHIRILGANDA xabar (keshlangan fayl
-  qayta yuboriladi);
+* media (rasm/video/GIF/stiker/ovozli xabar/dumaloq video) -> faqat
+  O'CHIRILGANDA xabar (keshlangan fayl qayta yuboriladi);
 * hisobot faqat SUHBATDOSH hodisalari uchun: eganing o'z yuborgan/
   tahrirlagan/o'chirgan xabarlari hech qachon hisobot qilib berilmaydi.
 
@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -45,10 +46,9 @@ from aiogram.types import (
 )
 
 from app.config import settings
-from app.database import db, parse_dt
-from app.utils.formatting import esc, fmt_number, fmt_time, mention_by_id
+from app.database import db
+from app.utils.formatting import esc, fmt_time, mention_by_id
 from app.utils.texts import (
-    LIMIT_REACHED_USER,
     NO_TEXT,
     REPORT_DELETED_MEDIA,
     REPORT_DELETED_MEDIA_CAPTION,
@@ -77,6 +77,8 @@ EVENT_STICKER = "sticker"
 EVENT_PHOTO = "photo"
 EVENT_VIDEO = "video"
 EVENT_ANIMATION = "animation"  # GIF
+EVENT_VOICE = "voice"          # ovozli xabar
+EVENT_VIDEO_NOTE = "video_note"  # dumaloq (circular) video
 EVENT_TEXT = "text"
 
 KIND_LABELS = {
@@ -84,12 +86,55 @@ KIND_LABELS = {
     EVENT_PHOTO: "Photo",
     EVENT_VIDEO: "Video",
     EVENT_ANIMATION: "GIF",
+    EVENT_VOICE: "Voice",
+    EVENT_VIDEO_NOTE: "Video note",
     EVENT_TEXT: "Message",
 }
 
 MEDIA_EVENTS = frozenset(
-    {EVENT_STICKER, EVENT_PHOTO, EVENT_VIDEO, EVENT_ANIMATION}
+    {
+        EVENT_STICKER,
+        EVENT_PHOTO,
+        EVENT_VIDEO,
+        EVENT_ANIMATION,
+        EVENT_VOICE,
+        EVENT_VIDEO_NOTE,
+    }
 )
+
+
+# ---------------------------------------------------------------------------
+# Ulanish keshi (protsess ichida) — TEZLIK uchun.
+#
+# Har bir business-update'da `db.get_connection` chaqirish Supabase ustida
+# ~200 ms turadi, holbuki ulanish FAQAT `business_connection` hodisasida
+# o'zgaradi.  Shuning uchun faol ulanishning (owner_id, owner_chat) juftini
+# eslab qolamiz va o'sha hodisada tozalaymiz:
+#   app.handlers.business.on_connection -> invalidate_connection(...)
+#
+# TTL — ehtiyot chorasi: hodisa o'tkazib yuborilsa ham eski holat abadiy
+# qolmaydi.  Uzilgan/yo'q ulanish KESHLANMAYDI: u keyingi update'da baribir
+# qayta o'qiladi.
+# ---------------------------------------------------------------------------
+_CONNECTION_TTL_SECONDS = 300.0
+
+# business_connection_id -> (monotonic vaqt, owner_id, owner_chat)
+_connection_cache: dict[str, tuple[float, int, Optional[int]]] = {}
+
+
+def invalidate_connection(connection_id: Optional[str] = None) -> None:
+    """Ulanish keshini tozalash.
+
+    * ``connection_id`` berilgan bo'lsa — faqat shu yozuv o'chiriladi
+      (ulan / uz / ruxsat o'zgardi hodisasida chaqiriladi).
+    * ``None`` bo'lsa — butun kesh tozalanadi (restart / testlar uchun).
+
+    Shundan keyingi birinchi update DBdan YANGI holatni o'qiydi.
+    """
+    if connection_id is None:
+        _connection_cache.clear()
+    else:
+        _connection_cache.pop(connection_id, None)
 
 
 class Reporter:
@@ -99,27 +144,18 @@ class Reporter:
         self.bot = bot
         self._owner_id: Optional[int] = None
         self._owner_chat: Optional[int] = None
-        # Kunlik limit "yetdi" xabari: {user_id: (YYYY-MM-DD, count)} —
-        # kuniga bir marta eslatish uchun kichik kesh.
-        self._limit_notified: dict[int, tuple[str, int]] = {}
 
     # ------------------------------------------------------------------ API
 
     async def report_incoming(self, message: Message) -> None:
         """business_message — hisobot YO'Q, tarkib faqat KESHlanadi.
 
-        Talab: har bir yuborilgan xabar (matn, stiker, rasm, video, GIF)
-        jim saqlanadi — keyin o'chirilsa, aynan nima o'chirilgani
-        ko'rsatilishi uchun.
-
-        LIMIT: premium YO'Q va admin kunlik limit qo'yganga ertalabgi
-        chegaradan ortiq xabar SAQLANMAYDI (fayl/database o'smasligi uchun).
+        Talab: har bir yuborilgan xabar (matn, stiker, rasm, video, GIF,
+        ovozli xabar, dumaloq video) jim saqlanadi — keyin o'chirilsa,
+        aynan nima o'chirilgani ko'rsatilishi uchun.
         """
         owner_id = await self._activate(message.business_connection_id)
         if owner_id is None:
-            return
-        if await self._limit_reached(owner_id):
-            await self._notify_limit_once(owner_id)
             return
 
         if message.sticker:
@@ -149,6 +185,22 @@ class Reporter:
                 message, EVENT_VIDEO,
                 self._media_details(
                     message.video.file_id, EVENT_VIDEO, message.caption
+                ),
+            )
+            return
+        if message.voice:
+            await self._store(
+                message, EVENT_VOICE,
+                self._media_details(
+                    message.voice.file_id, EVENT_VOICE, message.caption
+                ),
+            )
+            return
+        if message.video_note:  # dumaloq (circular) video
+            await self._store(
+                message, EVENT_VIDEO_NOTE,
+                self._media_details(
+                    message.video_note.file_id, EVENT_VIDEO_NOTE
                 ),
             )
             return
@@ -292,71 +344,31 @@ class Reporter:
 
     # ------------------------------------------------------------ internals
 
-    # -- kunlik limit (premiumning teskari tomoni) --------------------------
-
-    async def _limit_reached(self, owner_id: int) -> bool:
-        """Foydalanuvchining BUGUNGI nusxalari kunlik limitdan oshdimi?
-
-        Limit 0 (yoki o'rnatilmagan) = cheksiz.  PREMIUM faol bo'lsa doim
-        cheksiz.  Sanoq faqat BUGUN (0:00 dan) yozilgan nusxa yozuvlari
-        ustida hisoblanadi — limit har kuni yangilanadi.
-        """
-        row, raw_limit = await db.gather(
-            db.get_user(owner_id),
-            db.get_setting_cached(f"limit:{owner_id}", "0"),
-        )
-        try:
-            limit = int(raw_limit)
-        except (TypeError, ValueError):
-            return False
-        if limit <= 0:
-            return False
-        premium = parse_dt((row or {}).get("premium_until"))
-        if premium and premium > datetime.now():
-            return False  # premium = cheklov yo'q
-        now = datetime.now()
-        today = now.strftime("%Y-%m-%d")
-        cached = self._limit_notified.get(owner_id)
-        if cached and cached[0] == today:
-            return True  # limit to'lgani BILILDI — qayta hisoblamasin
-        since = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        n = await db.count_user_events_since(
-            owner_id,
-            since,
-            [EVENT_TEXT, EVENT_STICKER, EVENT_PHOTO, EVENT_VIDEO, EVENT_ANIMATION],
-        )
-        return n >= limit
-
-    async def _notify_limit_once(self, owner_id: int) -> None:
-        """"Limitga yetdingiz" xabari kuniga BIR marta yuboriladi."""
-        today = datetime.now().strftime("%Y-%m-%d")
-        cached = self._limit_notified.get(owner_id)
-        if cached and cached[0] == today:
-            return
-        self._limit_notified[owner_id] = (today, 1)
-        try:
-            limit = int(await db.get_setting_cached(f"limit:{owner_id}", "0"))
-        except (TypeError, ValueError):
-            limit = 0
-        try:
-            await self.bot.send_message(
-                owner_id,
-                LIMIT_REACHED_USER.format(limit=fmt_number(limit)),
-                parse_mode="HTML",
-            )
-        except Exception:  # noqa: BLE001 – foydalanuvchi botni bloklagan
-            logger.info("Could not deliver limit notice to %s", owner_id)
-
     async def _activate(self, connection_id: Optional[str]) -> Optional[int]:
         """Ulanishni tekshiradi va egasini keshlaydi.
 
         Ulanish faol bo'lsa — eganing user_id qaytariladi (hisobot manzili
         ham keshlanadi).  Aks holda None: na kesh, na hisobot.  Har bir
         'yo'q' sababi LOG qilinadi.
+
+        Natija PROTSESS bo'ylab (_connection_cache) eslab qolinadi — bir xil
+        ulanish uchun DBga qayta murojaat qilinmaydi.  Kesh faqat
+        ``invalidate_connection`` (business_connection hodisasi) yoki TTL
+        orqali yangilanadi.
         """
         if not connection_id:
             logger.warning("Reporter: business_connection_id bo'sh — update o'tdi")
             return None
+
+        # 1) Kesh: shu ulanish yaqinda o'qilgan bo'lsa DBga bormaymiz.
+        now = time.monotonic()
+        cached = _connection_cache.get(connection_id)
+        if cached is not None and now - cached[0] < _CONNECTION_TTL_SECONDS:
+            self._owner_id = cached[1]
+            self._owner_chat = cached[2]
+            return self._owner_id
+
+        # 2) Keshda yo'q (yoki TTL o'tdi) — DBdan o'qiymiz.
         conn = await db.get_connection(connection_id)
         if not conn:
             logger.warning("Reporter: ulanish DBda topilmadi (%s)", connection_id)
@@ -367,6 +379,8 @@ class Reporter:
         self._owner_id = int(conn["user_id"])
         chat_id = conn.get("user_chat_id") or conn.get("user_id")
         self._owner_chat = int(chat_id) if chat_id else None
+        # Faqat FAOL ulanish keshlanadi — uzilgani qayta o'qiladi.
+        _connection_cache[connection_id] = (now, self._owner_id, self._owner_chat)
         return self._owner_id
 
     # -- tarkib kesh formati -----------------------------------------------
@@ -407,6 +421,8 @@ class Reporter:
             or message.animation
             or message.photo
             or message.video
+            or message.voice
+            or message.video_note
         )
 
     def _current_media(
@@ -425,6 +441,10 @@ class Reporter:
             return EVENT_PHOTO, message.photo[-1].file_id, message.caption
         if message.video:
             return EVENT_VIDEO, message.video.file_id, message.caption
+        if message.voice:
+            return EVENT_VOICE, message.voice.file_id, message.caption
+        if message.video_note:
+            return EVENT_VIDEO_NOTE, message.video_note.file_id, None
         return None, None, None
 
     # -- "Kim" va chat nomlari ------------------------------------------------
@@ -522,6 +542,14 @@ class Reporter:
                 await self.bot.send_animation(
                     chat_id, animation=file_id, caption=cap, parse_mode="HTML"
                 )
+            elif event_type == EVENT_VOICE:
+                await self.bot.send_voice(
+                    chat_id, voice=file_id, caption=cap, parse_mode="HTML"
+                )
+            elif event_type == EVENT_VIDEO_NOTE:
+                # Dumaloq videoga caption yozib bo'lmaydi — izoh alohida ketadi.
+                await self.bot.send_video_note(chat_id, video_note=file_id)
+                await self._send(chat_id, cap)
             else:
                 return False
             return True

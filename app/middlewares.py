@@ -1,12 +1,11 @@
 """
-Outer middlewares (har bir update uchun ishlaydi).
+Outer middleware (har bir update uchun ishlaydi).
 
 * :class:`RegisterUserMiddleware` – foydalanuvchini DBga yozadi va
-  ``last_activity`` ni yangilab boradi ("kim onlayn" ekrani uchun).
-* :class:`AccessGuardMiddleware` – banlangan foydalanuvchilarning
-  so'rovlarini to'sadi.
+  ``last_activity`` ni yangilab boradi ("kim onlayn" hisobi uchun).
 
-Ega (``settings.admin_id``) hech qachon bloklanmaydi.
+Ban / kirish-tasdiqlash tizimi admin panel bilan birga OLIB TASHLANGAN
+(yangi talab) — endi bot barcha foydalanuvchilarga ochiq.
 """
 
 from __future__ import annotations
@@ -20,7 +19,6 @@ from aiogram.types import CallbackQuery, Message, TelegramObject, User as TgUser
 
 from app.config import settings
 from app.database import db
-from app.utils import texts
 
 logger = logging.getLogger(__name__)
 
@@ -28,30 +26,15 @@ logger = logging.getLogger(__name__)
 RATE_LIMIT_EVENTS = 5
 RATE_WINDOW = 1.0  # sekund
 
-# Tezlik ( Railway <-> Supabase ~200 ms): har bir update uchun DB YOZUVI
-# juda qimmat.  Yangi foydalanuvchini ro'yxatga olish + last_activity
-# yangilash 60 sekundda BIR marta yetarli ("onlayn" oynasi 120 s).
+# Tezlik: har bir update uchun DB YOZUVI juda qimmat (Railway <-> Supabase
+# ~200 ms).  Yangi foydalanuvchini ro'yxatga olish + last_activity
+# yangilash 60 sekundda BIR marta yetarli.
 UPSERT_INTERVAL_SECONDS = 60.0
-
-# Ban tekshiruvi ham har update'da DB o'qishini talab qilmasin — 30 sek
-# kesh.  Ban/unban kuchga kechikishi <= 30 s (amaliy jihatdan sezilmaydi).
-# Admin paneldan ban/unban qilinganda KESH ATAYIN BEKOR qilinadi
-# (:func:`invalidate_ban_cache`) — o'zgarish DARHOL kuchga kiradi.
-BAN_CACHE_TTL_SECONDS = 30.0
 
 # Keshlar (protsess ichida) — MAXSUS: faqat event loop ichidan o'zgartiriladi.
 _last_upsert: dict[int, float] = {}
-_ban_cache: dict[int, tuple[float, bool]] = {}
+_buckets: dict[int, list[float]] = {}
 _MAX_BUCKETS = 5_000
-
-
-def invalidate_ban_cache(user_id: int) -> None:
-    """Foydalanuvchining ban-keshini tozalaydi.
-
-    Admin panelda «⛔️ Cheklash» bosilganda foydalanuvchi 30 sekund KUTMASIN
-    — keyingi so'rovida DARHOL bloklansin (va aksincha, unban darhol ishlasin).
-    """
-    _ban_cache.pop(user_id, None)
 
 
 class RegisterUserMiddleware(BaseMiddleware):
@@ -59,8 +42,7 @@ class RegisterUserMiddleware(BaseMiddleware):
 
     ``business_message`` update'lari ATAYIN o'tkazib yuboriladi: ularda
     ``from_user`` — suhbatdosh, bot foydalanuvchisi emas; ularni ro'yxatga
-    olish foydalanuvchilar ro'yxatini (va ommaviy xabar oluvchilarni)
-    ifloslantiradi.
+    olish foydalanuvchilar ro'yxatini ifloslantiradi.
     """
 
     async def __call__(
@@ -80,8 +62,7 @@ class RegisterUserMiddleware(BaseMiddleware):
             last = _last_upsert.get(user.id, 0.0)
             if now - last >= UPSERT_INTERVAL_SECONDS:
                 # YAZUVNI boshlashdan OLDIN belgilaymiz: xato bo'lsa ham
-                # keyingi urinish 60 s dan KECHIN bo'ladi (har update'da
-                # qayta urinib botni sekinlashtirmaslik uchun).
+                # keyingi urinish 60 s dan KECHIN bo'ladi.
                 _last_upsert[user.id] = now
                 if len(_last_upsert) > _MAX_BUCKETS:
                     oldest = next(iter(_last_upsert))
@@ -97,7 +78,7 @@ class RegisterUserMiddleware(BaseMiddleware):
                     logger.exception("Failed to upsert user %s", user.id)
 
             # Anti-spam: admin uchun emas.
-            if user.id != settings.admin_id and _is_flooding(user.id):
+            if user.id != settings.admin_id and self._is_flooding(user.id):
                 logger.warning("Rate limit hit for user %s", user.id)
                 return None
 
@@ -115,58 +96,3 @@ class RegisterUserMiddleware(BaseMiddleware):
         window[:] = [t for t in window if now - t < RATE_WINDOW]
         window.append(now)
         return len(window) > RATE_LIMIT_EVENTS
-
-
-_buckets: dict[int, list[float]] = {}
-
-
-class AccessGuardMiddleware(BaseMiddleware):
-    """Ban tekshiruvi.
-
-    - ``is_banned`` -> bot umuman ishlamaydi.
-    Ega doim o'tadi.  business_* update'lariga tegmaydi (ularning
-    from_user — suhbatdosh, tekshiruv uchun mos emas; ularni business.py
-    ning o'zida connection egasi bo'yicha tekshiramiz).
-    """
-
-    async def __call__(
-        self,
-        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
-        event: TelegramObject,
-        data: dict[str, Any],
-    ) -> Any:
-        user: Optional[TgUser] = data.get("event_from_user")
-        is_direct = isinstance(event, CallbackQuery) or (
-            isinstance(event, Message) and not event.business_connection_id
-        )
-
-        if user is not None and user.id != settings.admin_id and is_direct:
-            # TEZLIK: ban holati 30 s KESHLANADI — har bir tugma uchun DB
-            # o'qish shart emas.  Admin paneldagi ban/unban KESHNI BEKOR
-            # qiladi (:func:`invalidate_ban_cache`) — kechikish yo'q.
-            now = time.monotonic()
-            cached = _ban_cache.get(user.id)
-            if cached is not None and now - cached[0] < BAN_CACHE_TTL_SECONDS:
-                banned = cached[1]
-            else:
-                row = await db.get_user(user.id)
-                banned = bool(row and row.get("is_banned"))
-                if len(_ban_cache) > _MAX_BUCKETS:
-                    oldest = next(iter(_ban_cache))
-                    _ban_cache.pop(oldest, None)
-                _ban_cache[user.id] = (now, banned)
-
-            if banned:
-                logger.info("Blocked banned user %s", user.id)
-                await self._reject(event, texts.BANNED, texts.BAN_CALLBACK)
-                return None
-
-        return await handler(event, data)
-
-    @staticmethod
-    async def _reject(event: TelegramObject, html_text: str, plain_text: str) -> None:
-        """Javob qaytarish: callback -> alert, oddiy xabar -> matn."""
-        if isinstance(event, CallbackQuery):
-            await event.answer(plain_text, show_alert=True)
-        elif isinstance(event, Message):
-            await event.answer(html_text)

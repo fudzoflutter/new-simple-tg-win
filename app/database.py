@@ -15,6 +15,10 @@ Supabase ulanishi (bir marta):
 3. Botni qayta ishga tushiring — jadvallar avtomatik yaratiladi va mavjud
    bot.db ma'lumotlari BIR MARTA import qilinadi (supabase_migrations da
    belgilanadi).
+
+Bot faqat 3 jadval bilan ishlaydi: ``users``, ``events`` (xabarlar keshi —
+o'chirilgan xabarlarni qayta yuborish uchun), ``connections``.
+Premium/obuna/admin-panel OLIB TASHLANGAN (yangi talab).
 """
 
 from __future__ import annotations
@@ -39,36 +43,9 @@ CREATE TABLE IF NOT EXISTS users (
     username       TEXT,
     first_name     TEXT,
     last_name      TEXT,
-    is_banned      BOOLEAN NOT NULL DEFAULT FALSE,
-    access_status  TEXT NOT NULL DEFAULT 'approved',  -- tarixiy ustun; kirish hamma uchun ochiq
-    reviewed_by    BIGINT,
-    reviewed_at    TEXT,
-    is_admin       BOOLEAN NOT NULL DEFAULT FALSE,
-    premium_until  TEXT,
     connected_at   TEXT,
     last_activity  TEXT,
     created_at     TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS plans (
-    id             BIGSERIAL PRIMARY KEY,
-    title          TEXT NOT NULL,
-    duration_days  INTEGER NOT NULL,
-    price          BIGINT NOT NULL,
-    description    TEXT NOT NULL DEFAULT '',
-    is_active      BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at     TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS payments (
-    id               BIGSERIAL PRIMARY KEY,
-    user_id          BIGINT NOT NULL,
-    plan_id          BIGINT NOT NULL,
-    receipt_file_id  TEXT NOT NULL,
-    status           TEXT NOT NULL DEFAULT 'pending',
-    created_at       TEXT NOT NULL,
-    reviewed_at      TEXT,
-    reviewed_by      BIGINT
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -96,23 +73,12 @@ CREATE INDEX IF NOT EXISTS idx_events_time   ON events (occurred_at);
 CREATE INDEX IF NOT EXISTS idx_events_type   ON events (event_type);
 CREATE INDEX IF NOT EXISTS idx_events_user   ON events (user_id);
 CREATE INDEX IF NOT EXISTS idx_events_chat_message ON events (chat_id, message_id);
-CREATE INDEX IF NOT EXISTS idx_payments_stat ON payments (status);
 
 -- One-time import marker (so we never import the same SQLite file twice).
 CREATE TABLE IF NOT EXISTS supabase_migrations (
     name TEXT PRIMARY KEY,
     applied_at TEXT NOT NULL
 );
-
--- Bot sozlamalari (kalit-qiymat) — masalan, Premium bo'limi yoqilganligi.
-CREATE TABLE IF NOT EXISTS bot_settings (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-
--- Boshlang'ich qiymat: Premium bo'limi YOPIQ (SQLite backend ham shunday).
-INSERT INTO bot_settings (key, value) VALUES ('premium_enabled', '0')
-ON CONFLICT (key) DO NOTHING;
 """
 
 
@@ -146,9 +112,6 @@ class Database:
 
     def __init__(self) -> None:
         self._backend: Any = None  # PostgresDatabase | SqliteDatabase
-        # Tezlik: sozlamalar (key-value) uchun qisqa TTL kesh — har bir
-        # ekran har safar DBga uchib ketmasin (5 sek yetarli).
-        self._settings_cache: dict[str, tuple[float, str]] = {}
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -180,14 +143,14 @@ class Database:
         Supabase Sydney ~200 ms uzoqda: 5 ta ketma-ket so'rov = 1 sekund,
         parallel = ~200 ms.  Havola havzasida (pool) parallel ishlaydi.
 
-        Misol: ``user, conns, total = await db.gather(
-            db.get_user(uid), db.connections_for_user(uid), db.count_user_events(uid))``
+        Misol: ``user, conns = await db.gather(
+            db.get_user(uid), db.connections_for_user(uid))``
         """
         import asyncio
 
         return list(await asyncio.gather(*aws))
 
-    # -- delegation -----------------------------------------------------------
+    # -- delegation --------------------------------------------------------
     # Har bir metod real backendga yo'naltiriladi.
 
     async def upsert_user(self, user_id: int, username, first_name, last_name) -> None:
@@ -199,84 +162,17 @@ class Database:
     async def get_user(self, user_id: int) -> Optional[dict]:
         return await self._backend.get_user(user_id)
 
-    async def all_users(self, only_active: bool = False) -> list[dict]:
-        return await self._backend.all_users(only_active)
+    async def all_users(self) -> list[dict]:
+        return await self._backend.all_users()
 
     async def online_users(self, window_seconds: int = 120) -> list[dict]:
         return await self._backend.online_users(window_seconds)
 
-    async def count_users(self, only_active: bool = False) -> int:
-        return await self._backend.count_users(only_active)
+    async def count_users(self) -> int:
+        return await self._backend.count_users()
 
     async def count_online(self, window_seconds: int = 120) -> int:
         return await self._backend.count_online(window_seconds)
-
-    async def set_banned(self, user_id: int, banned: bool) -> None:
-        await self._backend.set_banned(user_id, banned)
-
-    async def set_admin(self, user_id: int, is_admin: bool) -> None:
-        await self._backend.set_admin(user_id, is_admin)
-
-    async def all_admins(self) -> list[int]:
-        return await self._backend.all_admins()
-
-
-    async def set_premium(self, user_id: int, until: Optional[datetime]) -> None:
-        await self._backend.set_premium(user_id, until)
-
-    async def extend_premium(self, user_id: int, days: int) -> datetime:
-        return await self._backend.extend_premium(user_id, days)
-
-    async def premium_users(self) -> list[dict]:
-        return await self._backend.premium_users()
-
-    async def expired_premium_users(self) -> list[dict]:
-        return await self._backend.expired_premium_users()
-
-    async def create_plan(self, title: str, duration_days: int, price: int, description: str) -> int:
-        return await self._backend.create_plan(title, duration_days, price, description)
-
-    async def get_plan(self, plan_id: int) -> Optional[dict]:
-        return await self._backend.get_plan(plan_id)
-
-    async def active_plans(self) -> list[dict]:
-        return await self._backend.active_plans()
-
-    async def all_plans(self) -> list[dict]:
-        return await self._backend.all_plans()
-
-    async def set_plan_active(self, plan_id: int, active: bool) -> None:
-        await self._backend.set_plan_active(plan_id, active)
-
-    async def update_plan(self, plan_id: int, **fields) -> None:
-        """Tarif maydonlarini yangilash (title, duration_days, price, description)."""
-        await self._backend.update_plan(plan_id, **fields)
-
-    async def delete_plan(self, plan_id: int) -> None:
-        await self._backend.delete_plan(plan_id)
-
-    async def create_payment(self, user_id: int, plan_id: int, receipt_file_id: str) -> int:
-        return await self._backend.create_payment(user_id, plan_id, receipt_file_id)
-
-    async def get_payment(self, payment_id: int) -> Optional[dict]:
-        return await self._backend.get_payment(payment_id)
-
-    async def pending_payments(self) -> list[dict]:
-        return await self._backend.pending_payments()
-
-    async def payment_with_plan(self, payment_id: int) -> Optional[dict]:
-        return await self._backend.payment_with_plan(payment_id)
-
-    async def pending_payments_with_plans(self) -> list[dict]:
-        """Kutilayotgan to'lovlar + tarif NOMI (JOIN) — panel ro'yxati uchun."""
-        return await self._backend.pending_payments_with_plans()
-
-    async def delete_cached_event(self, event_id: int) -> bool:
-        """Keshlangan xabar yozuvini o'chiradi (admin paneldagi "Nusxani o'chirish")."""
-        return await self._backend.delete_cached_event(event_id)
-
-    async def set_payment_status(self, payment_id: int, status: str, reviewed_by: int) -> None:
-        await self._backend.set_payment_status(payment_id, status, reviewed_by)
 
     async def add_event(
         self,
@@ -302,12 +198,6 @@ class Database:
 
     async def count_user_events(self, user_id: int, event_type: Optional[str] = None) -> int:
         return await self._backend.count_user_events(user_id, event_type)
-
-    async def count_user_events_since(
-        self, user_id: int, since: datetime, event_types: Optional[list[str]] = None
-    ) -> int:
-        """Foydalanuvchining `since` dan keyingi hodisalari (kunlik limit uchun)."""
-        return await self._backend.count_user_events_since(user_id, since, event_types)
 
     async def get_event_by_message(self, chat_id: int, message_id: int) -> Optional[dict]:
         return await self._backend.get_event_by_message(chat_id, message_id)
@@ -344,34 +234,6 @@ class Database:
 
     async def connections_for_user(self, user_id: int) -> list[dict]:
         return await self._backend.connections_for_user(user_id)
-
-    # -- bot settings (key-value) --------------------------------------------
-
-    async def get_setting(self, key: str, default: str = "") -> str:
-        return await self._backend.get_setting(key, default)
-
-    async def get_setting_cached(self, key: str, default: str = "", ttl: float = 5.0) -> str:
-        """``get_setting`` + 5 sekundlik kesh (tezlik uchun).
-
-        Ko'p o'qiladigan sozlamalar (masalan ``premium_enabled``) har bir
-        tugmada DBga ketmasligi kerak.  ``set_setting`` keshni darhol
-        yangilaydi — admin o'zgartirishi 5 sek ichida hammaga ko'rinadi.
-        """
-        import time as _time
-
-        now = _time.monotonic()
-        hit = self._settings_cache.get(key)
-        if hit is not None and now - hit[0] < ttl:
-            return hit[1]
-        value = await self._backend.get_setting(key, default)
-        self._settings_cache[key] = (now, value)
-        return value
-
-    async def set_setting(self, key: str, value: str) -> None:
-        await self._backend.set_setting(key, value)
-        import time as _time
-
-        self._settings_cache[key] = (_time.monotonic(), value)
 
 
 class PostgresDatabase:
@@ -443,11 +305,6 @@ class PostgresDatabase:
             await conn.execute(
                 "ALTER TABLE events ADD COLUMN IF NOT EXISTS sender_id BIGINT"
             )
-            # Kirish tasdiqlash tizimi olib tashlandi: eski 'pending' yozuvlar
-            # ham ochiq bo'lsin (bir martalik, idempotent).
-            await conn.execute(
-                "UPDATE users SET access_status = 'approved' WHERE access_status = 'pending'"
-            )
         await self._import_sqlite_once()
         logger.info("Supabase Postgres ready (%s)", settings.supabase_host)
 
@@ -470,24 +327,10 @@ class PostgresDatabase:
         return dict(row) if row else None
 
     async def _execute(self, sql: str, *params: Any) -> int:
-        """Run a write query; returns 0 (auto ids are never needed here).
-
-        Eski versiya HAR BIR INSERTga "RETURNING id" qo'shib yuborardi —
-        lekin users / events / connections / bot_settings jadvallarida `id`
-        ustuni YO'Q, shu sababli Supabaseda har bir yozuv
-        "column \"id\" does not exist" xatosi bilan yiqilardi.  Avto-id
-        faqat plans va payments jadvallarida bor va ular
-        ``_execute_returning_id()`` dan foydalanadi.
-        """
+        """Run a write query; returns 0 (auto ids are never needed here)."""
         async with self.pool.acquire() as conn:
             await conn.execute(sql, *params)
         return 0
-
-    async def _execute_returning_id(self, sql: str, *params: Any) -> int:
-        """INSERT ... RETURNING id helper (used by plans/payments)."""
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow(sql, *params)
-        return row["id"] if row else 0
 
     async def _fetchval(self, sql: str, *params: Any) -> Any:
         async with self.pool.acquire() as conn:
@@ -504,12 +347,7 @@ class PostgresDatabase:
         first_name: Optional[str],
         last_name: Optional[str],
     ) -> None:
-        """        Insert the user if new, otherwise refresh profile fields.
-
-        Kirish tasdiqlash tizimi OLIB TASHLANGAN (yangi talab): hamma
-        foydalanuvchi botdan bemalol foydalanadi; yagona cheklov — ban.
-        Eski 'pending' yozuvlari ham 'approved' qilib yangilanadi.
-        """
+        """Insert the user if new, otherwise refresh profile fields."""
         now = _now()
         await self._execute(
             """
@@ -541,10 +379,9 @@ class PostgresDatabase:
     async def get_user(self, user_id: int) -> Optional[dict]:
         return await self._fetch_one("SELECT * FROM users WHERE user_id = $1", user_id)
 
-    async def all_users(self, only_active: bool = False) -> list[dict]:
-        """All users, newest first. only_active -> approved & not banned."""
-        where = "WHERE is_banned = FALSE AND access_status = 'approved'" if only_active else ""
-        return await self._fetch_all(f"SELECT * FROM users {where} ORDER BY created_at DESC")
+    async def all_users(self) -> list[dict]:
+        """All users, newest first."""
+        return await self._fetch_all("SELECT * FROM users ORDER BY created_at DESC")
 
     async def online_users(self, window_seconds: int = 120) -> list[dict]:
         """Users whose last_activity is within the given window.
@@ -557,17 +394,14 @@ class PostgresDatabase:
         return await self._fetch_all(
             """
             SELECT * FROM users
-            WHERE last_activity >= $1 AND is_banned = FALSE
+            WHERE last_activity >= $1
             ORDER BY last_activity DESC
             """,
             threshold,
         )
 
-    async def count_users(self, only_active: bool = False) -> int:
-        where = "WHERE is_banned = FALSE AND access_status = 'approved'" if only_active else ""
-        return int(
-            await self._fetchval(f"SELECT COUNT(*) FROM users {where}")
-        )
+    async def count_users(self) -> int:
+        return int(await self._fetchval("SELECT COUNT(*) FROM users"))
 
     async def count_online(self, window_seconds: int = 120) -> int:
         threshold = (datetime.now() - timedelta(seconds=window_seconds)).isoformat(
@@ -575,179 +409,9 @@ class PostgresDatabase:
         )
         return int(
             await self._fetchval(
-                "SELECT COUNT(*) FROM users WHERE last_activity >= $1 AND is_banned = FALSE",
+                "SELECT COUNT(*) FROM users WHERE last_activity >= $1",
                 threshold,
             )
-        )
-
-    async def set_banned(self, user_id: int, banned: bool) -> None:
-        await self._execute(
-            "UPDATE users SET is_banned = $1 WHERE user_id = $2",
-            banned,
-            user_id,
-        )
-
-    async def set_admin(self, user_id: int, is_admin: bool) -> None:
-        await self._execute(
-            "UPDATE users SET is_admin = $1 WHERE user_id = $2",
-            is_admin,
-            user_id,
-        )
-
-    async def all_admins(self) -> list[int]:
-        rows = await self._fetch_all("SELECT user_id FROM users WHERE is_admin = TRUE")
-        ids = {row["user_id"] for row in rows}
-        ids.add(settings.admin_id)
-        return sorted(ids)
-
-    # -- premium -------------------------------------------------------------
-
-    async def set_premium(self, user_id: int, until: Optional[datetime]) -> None:
-        await self._execute(
-            "UPDATE users SET premium_until = $1 WHERE user_id = $2",
-            until.isoformat(timespec="seconds") if until else None,
-            user_id,
-        )
-
-    async def extend_premium(self, user_id: int, days: int) -> datetime:
-        """Add `days` on top of remaining premium time; returns new deadline."""
-        user = await self.get_user(user_id)
-        base = parse_dt(user.get("premium_until")) if user else None
-        now = datetime.now()
-        start = base if base and base > now else now
-        until = start + timedelta(days=days)
-        await self.set_premium(user_id, until)
-        return until
-
-    async def premium_users(self) -> list[dict]:
-        return await self._fetch_all(
-            "SELECT * FROM users WHERE premium_until IS NOT NULL AND premium_until > $1",
-            _now(),
-        )
-
-    async def expired_premium_users(self) -> list[dict]:
-        return await self._fetch_all(
-            "SELECT * FROM users WHERE premium_until IS NOT NULL AND premium_until <= $1",
-            _now(),
-        )
-
-    # ======================================================================
-    # PLANS
-    # ======================================================================
-
-    async def create_plan(
-        self, title: str, duration_days: int, price: int, description: str
-    ) -> int:
-        return await self._execute_returning_id(
-            """
-            INSERT INTO plans (title, duration_days, price, description, created_at)
-            VALUES ($1, $2, $3, $4, $5)
-            RETURNING id
-            """,
-            title,
-            duration_days,
-            price,
-            description,
-            _now(),
-        )
-
-    async def get_plan(self, plan_id: int) -> Optional[dict]:
-        return await self._fetch_one("SELECT * FROM plans WHERE id = $1", plan_id)
-
-    async def active_plans(self) -> list[dict]:
-        return await self._fetch_all(
-            "SELECT * FROM plans WHERE is_active = TRUE ORDER BY duration_days"
-        )
-
-    async def all_plans(self) -> list[dict]:
-        return await self._fetch_all("SELECT * FROM plans ORDER BY created_at DESC")
-
-    async def set_plan_active(self, plan_id: int, active: bool) -> None:
-        await self._execute(
-            "UPDATE plans SET is_active = $1 WHERE id = $2",
-            active,
-            plan_id,
-        )
-
-    async def update_plan(self, plan_id: int, **fields) -> None:
-        """Update editable plan fields (edit mode)."""
-        allowed = {"title", "duration_days", "price", "description"}
-        sets, params = [], []
-        n = 1
-        for key, value in fields.items():
-            if key in allowed:
-                sets.append(f"{key} = ${n}")
-                params.append(value)
-                n += 1
-        if not sets:
-            return
-        params.append(plan_id)
-        await self._execute(
-            f"UPDATE plans SET {', '.join(sets)} WHERE id = ${n}", *params
-        )
-
-    async def delete_plan(self, plan_id: int) -> None:
-        await self._execute("DELETE FROM plans WHERE id = $1", plan_id)
-
-    # ======================================================================
-    # PAYMENTS
-    # ======================================================================
-
-    async def create_payment(self, user_id: int, plan_id: int, receipt_file_id: str) -> int:
-        return await self._execute_returning_id(
-            """
-            INSERT INTO payments (user_id, plan_id, receipt_file_id, created_at)
-            VALUES ($1, $2, $3, $4)
-            RETURNING id
-            """,
-            user_id,
-            plan_id,
-            receipt_file_id,
-            _now(),
-        )
-
-    async def get_payment(self, payment_id: int) -> Optional[dict]:
-        return await self._fetch_one("SELECT * FROM payments WHERE id = $1", payment_id)
-
-    async def pending_payments(self) -> list[dict]:
-        return await self._fetch_all(
-            "SELECT * FROM payments WHERE status = 'pending' ORDER BY created_at"
-        )
-
-    async def payment_with_plan(self, payment_id: int) -> Optional[dict]:
-        return await self._fetch_one(
-            """
-            SELECT p.*, pl.duration_days AS duration_days
-            FROM payments p LEFT JOIN plans pl ON pl.id = p.plan_id
-            WHERE p.id = $1
-            """,
-            payment_id,
-        )
-
-    async def pending_payments_with_plans(self) -> list[dict]:
-        """Kutilayotgan to'lovlar tarif nomi bilan (bitta JOIN so'rovi)."""
-        return await self._fetch_all(
-            """
-            SELECT p.*, pl.title AS plan_title, pl.duration_days AS duration_days
-            FROM payments p LEFT JOIN plans pl ON pl.id = p.plan_id
-            WHERE p.status = 'pending'
-            ORDER BY p.created_at
-            """
-        )
-
-    async def delete_cached_event(self, event_id: int) -> bool:
-        n = await self._fetchval(
-            "DELETE FROM events WHERE id = $1 RETURNING 1", event_id
-        )
-        return bool(n)
-
-    async def set_payment_status(self, payment_id: int, status: str, reviewed_by: int) -> None:
-        await self._execute(
-            "UPDATE payments SET status = $1, reviewed_at = $2, reviewed_by = $3 WHERE id = $4",
-            status,
-            _now(),
-            reviewed_by,
-            payment_id,
         )
 
     # ======================================================================
@@ -804,16 +468,6 @@ class PostgresDatabase:
         if event_type:
             params.append(event_type)
             sql += f" AND event_type = ${len(params)}"
-        return int(await self._fetchval(sql, *params))
-
-    async def count_user_events_since(
-        self, user_id: int, since: datetime, event_types: Optional[list[str]] = None
-    ) -> int:
-        sql = "SELECT COUNT(*) FROM events WHERE user_id = $1 AND occurred_at >= $2"
-        params: list[Any] = [user_id, since.isoformat(timespec="seconds")]
-        if event_types:
-            params.append(list(event_types))
-            sql += f" AND event_type = ANY(${len(params)})"
         return int(await self._fetchval(sql, *params))
 
     async def get_event_by_message(
@@ -930,24 +584,6 @@ class PostgresDatabase:
             user_id,
         )
 
-    # -- bot settings -----------------------------------------------------------
-
-    async def get_setting(self, key: str, default: str = "") -> str:
-        value = await self._fetchval(
-            "SELECT value FROM bot_settings WHERE key = $1", key
-        )
-        return value if value is not None else default
-
-    async def set_setting(self, key: str, value: str) -> None:
-        await self._execute(
-            """
-            INSERT INTO bot_settings (key, value) VALUES ($1, $2)
-            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-            """,
-            key,
-            value,
-        )
-
     # ======================================================================
     # ONE-TIME SQLITE -> SUPABASE IMPORT
     # ======================================================================
@@ -975,26 +611,21 @@ class PostgresDatabase:
 
             conn = await aiosqlite.connect(settings.db_path)
             conn.row_factory = aiosqlite.Row
+
+            async def _rows(table: str) -> list[dict]:
+                """Read a table if it exists (old DBs may lack some tables)."""
+                try:
+                    cursor = await conn.execute(f"SELECT * FROM {table}")
+                except Exception:  # noqa: BLE001 – table missing
+                    return []
+                rows = [dict(r) for r in await cursor.fetchall()]
+                await cursor.close()
+                return rows
+
             try:
-                cursor = await conn.execute("SELECT * FROM users")
-                users = [dict(r) for r in await cursor.fetchall()]
-                await cursor.close()
-
-                cursor = await conn.execute("SELECT * FROM plans")
-                plans = [dict(r) for r in await cursor.fetchall()]
-                await cursor.close()
-
-                cursor = await conn.execute("SELECT * FROM payments")
-                payments = [dict(r) for r in await cursor.fetchall()]
-                await cursor.close()
-
-                cursor = await conn.execute("SELECT * FROM events")
-                events = [dict(r) for r in await cursor.fetchall()]
-                await cursor.close()
-
-                cursor = await conn.execute("SELECT * FROM connections")
-                connections = [dict(r) for r in await cursor.fetchall()]
-                await cursor.close()
+                users = await _rows("users")
+                events = await _rows("events")
+                connections = await _rows("connections")
             finally:
                 await conn.close()
 
@@ -1003,48 +634,14 @@ class PostgresDatabase:
                     await pg.execute(
                         """
                         INSERT INTO users (user_id, username, first_name, last_name,
-                            is_banned, access_status, reviewed_by, reviewed_at,
-                            is_admin, premium_until, connected_at, last_activity, created_at)
-                        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                            connected_at, last_activity, created_at)
+                        VALUES ($1,$2,$3,$4,$5,$6,$7)
                         ON CONFLICT (user_id) DO NOTHING
                         """,
                         u["user_id"], u.get("username"), u.get("first_name"),
-                        u.get("last_name"), bool(u.get("is_banned")),
-                        u.get("access_status") or "approved", u.get("reviewed_by"),
-                        u.get("reviewed_at"), bool(u.get("is_admin")),
-                        u.get("premium_until"), u.get("connected_at"),
+                        u.get("last_name"), u.get("connected_at"),
                         u.get("last_activity"), u["created_at"],
                     )
-                for p in plans:
-                    await pg.execute(
-                        """
-                        INSERT INTO plans (id, title, duration_days, price, description,
-                                           is_active, created_at)
-                        VALUES ($1,$2,$3,$4,$5,$6,$7)
-                        ON CONFLICT (id) DO NOTHING
-                        """,
-                        p["id"], p["title"], p["duration_days"], p["price"],
-                        p.get("description") or "", bool(p.get("is_active")), p["created_at"],
-                    )
-                # Fix the id sequence after explicit-id inserts.
-                await pg.execute(
-                    "SELECT setval('plans_id_seq', GREATEST((SELECT COALESCE(MAX(id),1) FROM plans), 1))"
-                )
-                for p in payments:
-                    await pg.execute(
-                        """
-                        INSERT INTO payments (id, user_id, plan_id, receipt_file_id,
-                                              status, created_at, reviewed_at, reviewed_by)
-                        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-                        ON CONFLICT (id) DO NOTHING
-                        """,
-                        p["id"], p["user_id"], p["plan_id"], p["receipt_file_id"],
-                        p["status"], p["created_at"], p.get("reviewed_at"),
-                        p.get("reviewed_by"),
-                    )
-                await pg.execute(
-                    "SELECT setval('payments_id_seq', GREATEST((SELECT COALESCE(MAX(id),1) FROM payments), 1))"
-                )
                 for e in events:
                     await pg.execute(
                         """
@@ -1075,8 +672,8 @@ class PostgresDatabase:
                 )
 
             logger.info(
-                "Import finished: %s users, %s plans, %s payments, %s events, %s connections",
-                len(users), len(plans), len(payments), len(events), len(connections),
+                "Import finished: %s users, %s events, %s connections",
+                len(users), len(events), len(connections),
             )
         except Exception:  # noqa: BLE001 – never block startup on import
             logger.exception("SQLite import failed (bot continues with Supabase data)")

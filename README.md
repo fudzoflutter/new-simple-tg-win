@@ -3,25 +3,30 @@
 An **aiogram 3** bot that connects to users through *Telegram for Business*
 and reports message activity to the bot owner: edits and deletions of their
 chat partners' messages (sent messages are cached silently and never
-forwarded; photos/videos/GIFs/stickers are re-sent only when deleted).
-Includes a full **admin panel** with premium
-subscriptions, manual payment confirmation, user management and broadcasts.
+forwarded; photos / videos / GIFs / stickers / voice messages / circular
+videos are re-sent only when deleted).
+
+The bot is intentionally **lean**: it also **cleans links** (strips tracking
+parameters) for anyone and shows **how many people use the bot**. There is
+**no admin panel, no premium, no subscriptions** — those features were
+removed to keep the runtime simple.
 
 ---
 
 ## ✨ Features
 
-| Spec | Feature |
-|------|---------|
+| # | Feature |
+|---|---------|
 | 1 | **Connect** button guides the user into *Telegram Settings → Business → Chatbots* |
-| 2 | **Statistics** button + "how it works" explanation + Admin panel (Premium button visible to everyone, panel admin-only) |
+| 2 | **Statistics** button + "how it works" explanation |
 | 3 | Instant ✅/❌ notifications to the user when the business connection is established or lost |
-| 4 | Reports only for activity that matters: partner message **edits** (old → new) and **deletions** — cached media (photos, videos, GIFs, stickers) is re-sent when deleted. Sent messages are cached silently, never forwarded; the owner's own actions are never reported |
-| 5 | Admin panel: subscription plans (duration/price/description), receipt approval, user list with online status + restrict, broadcast with media & premium emoji |
+| 4 | Reports only for activity that matters: partner message **edits** (old → new) and **deletions** — cached media (photos, videos, GIFs, stickers, **voice messages, circular videos**) is re-sent when deleted. Sent messages are cached silently, never forwarded; the owner's own actions are never reported |
+| 5 | **Link cleaner** — send any link and get it back without tracking params (`utm_*`, `fbclid`, `gclid`, …). Works for everyone, no admin panel |
+| 6 | **User count** — anyone can see how many people use the bot (+ how many were active in the last 2 minutes) |
 
 Extras: colored inline buttons (`style=` — Bot API 9.4+), premium emoji icons
-(`icon_custom_emoji_id`), copy-on-tap card number, anti-flood, banned-user
-guard, SQLite storage.
+(`icon_custom_emoji_id`), anti-flood, Supabase storage with a local SQLite
+fallback.
 
 ---
 
@@ -43,6 +48,9 @@ cp .env.example .env             # Windows: copy .env.example .env
 python run.py
 ```
 
+> A second key file, `env.txt`, is also read (and wins over `.env`).  Either
+> works; keep your real keys out of version control (both are gitignored).
+
 ### 🐘 Switching to Supabase (cloud database)
 
 The bot runs fine on local SQLite, but with a free [Supabase](https://supabase.com)
@@ -59,8 +67,6 @@ project your data lives in the cloud (and survives machine reinstalls):
    ```bash
    SUPABASE_DB_URL="postgresql://..." python tests/supabase_test.py
    ```
-
-   Without the variable it still validates the full CRUD matrix offline.
 
 > The pooler URI (port 6543) is required — the code disables prepared
 > statements for it (`statement_cache_size=0`).  The direct URI (5432)
@@ -85,31 +91,29 @@ bot.db                  # SQLite database (auto-created, fallback storage)
 run.py                  # launcher: python run.py
 logs/bot.log            # rotating runtime log (auto-created, 2 MB x 3 files)
 app/
-├── config.py           # ALL settings (card number, emoji IDs, .env)
-├── database.py         # schema + every SQL query (Database class)
-├── main.py             # wiring: bot, dispatcher, routers, middlewares
-├── states.py           # FSM dialogs (plan wizard, broadcast)
-├── filters/__init__.py # IsAdmin filter
+├── config.py           # ALL settings (.env / env.txt)
+├── database.py         # schema + every SQL query (Database facade + Postgres)
+├── storage_sqlite.py   # SQLite backend (offline fallback, identical API)
+├── main.py             # wiring: bot, dispatcher, routers, middleware
+├── middlewares.py      # registration + activity + anti-flood
 ├── handlers/
-│   ├── user.py         # /start menu, statistics, connect, premium, receipts
-│   ├── business.py     # connection notices + activity capture
-│   ├── admin_panel.py  # dashboard, users, online, restrict
-│   ├── admin_plans.py  # create/edit/delete premium plans
-│   ├── admin_payments.py # approve/reject receipts
-│   └── admin_broadcast.py # advertisements to all users
+│   ├── user.py         # /start menu, statistics, user count, connect, links
+│   └── business.py     # connection notices + activity capture
 ├── keyboards/
-│   ├── user_kb.py      # user keyboards + callback constants
-│   └── admin_kb.py     # admin keyboards + callback constants
+│   └── user_kb.py      # user keyboards + callback constants
 ├── services/
 │   ├── reporter.py     # builds the owner report messages
-│   ├── broadcaster.py  # mass-send logic
+│   ├── linkcleaner.py  # strips tracking params from links
 │   └── watchdog.py     # daily DB housekeeping
 └── utils/
     ├── formatting.py   # HTML escaping, mentions, date/number formats
     ├── logger.py       # logging setup
     ├── texts.py        # EVERY user-facing text (edit messages here)
-    └── ui.py           # premium emoji IDs + colored button factory
+    └── ui.py           # colored button factory
 ```
+
+The bot only uses **three tables**: `users`, `events` (the message cache that
+lets deleted content be re-sent) and `connections`.
 
 ---
 
@@ -118,26 +122,40 @@ app/
 | I want to change… | Go to |
 |---|---|
 | Bot texts / wording / language | `app/utils/texts.py` |
-| Card number, cardholder | `app/config.py` → `payment_*` |
-| Premium emoji icons on buttons | `app/utils/ui.py` → `CustomEmoji` (or `.env`) |
+| Premium emoji icons on buttons | `app/emoji_config.py` |
 | Button colors | `style=` args in `app/keyboards/*.py` (`danger`/`success`/`primary`) |
-| "Online" window | `ONLINE_WINDOW_SECONDS` in `app/handlers/admin_panel.py` |
-| Broadcast speed | `THROTTLE_SECONDS` in `app/services/broadcaster.py` |
+| "Online" window | `ONLINE_WINDOW_SECONDS` / `window_seconds` in `app/handlers/user.py` |
+| Link cleaning rules | `TRACKING_EXACT` / `TRACKING_PREFIXES` in `app/services/linkcleaner.py` |
 | Report text limits | `MAX_TEXT` in `app/services/reporter.py` |
 | Report rules (what gets reported) | `report_incoming` / `report_edited` / `report_deleted` in `app/services/reporter.py` |
 
 ---
 
-## 🧭 How the admin panel works
+## 🧭 How it works
 
-* `/admin` command (owner only) opens the panel.
-* **Users** — paginated list 🟢online/⚪️offline; tap a user → profile card
-  with *Open profile* link and *Restrict / Unrestrict*.
-* **Premium plans** — ➕ Create plan wizard: *title → days → price →
-  description*. Tap a plan's name in the list to open its card: **edit**
-  any field (title/days/price/description), hide/show, or delete it.
-  Plans appear instantly on the user's Premium screen.
-* **Payments** — users send receipt screenshots → admin gets them with
-  ✅ Approve (activates premium, notifies user) / ❌ Reject buttons.
-* **Broadcast** — send any post (text with links, photo, video, sticker,
-  premium emoji) → confirm → delivered to all active users with a summary.
+* **Business connection** — `/start` shows the menu; the **Connect** button
+  walks the user through *Telegram Business → Chatbots*. The bot is notified
+  the moment the connection is created or lost.
+* **Reports** — while connected, every incoming business message is cached
+  silently. The owner is only notified when a **partner** edits or deletes:
+  * edit → `✏️ Xabar tahrirlandi` with 📱 Default (old) → 📲 Edited (new);
+  * delete (text) → the full original text;
+  * delete (media) → the cached file is re-sent (photo / video / GIF /
+    sticker / voice / circular video).
+  The user's own edits/deletes are never reported.
+* **Link cleaner** — any message containing a link gets the tracking
+  parameters stripped; the cleaned link is returned (only when something was
+  actually removed, so plain chat text is ignored).
+* **User count** — the **Foydalanuvchilar** button shows the total number of
+  users and how many were active recently.
+
+### Performance
+
+The connection used to be re-read from the database on **every** business
+update (~200 ms each on a remote Supabase). It is now cached in memory
+(`_connection_cache` in `app/services/reporter.py`), so an incoming message
+costs a **single** DB write. The cache is dropped whenever Telegram sends a
+`business_connection` change (connect / disconnect / permission change), so
+even a reconnect takes effect on the very next update; a 5-minute TTL is a
+safety net in case an event is ever missed. Disconnected or unknown
+connections are never cached.

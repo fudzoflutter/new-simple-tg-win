@@ -12,6 +12,11 @@
 --
 -- Fayl idempotent: bir necha marta ishga tushirilsa, hech narsani
 -- buzmaydi (mavjud jadvallar/indexlar qayta yaratilmaydi).
+--
+-- DIQQAT: bot faqat 3 jadval bilan ishlaydi — users, events, connections.
+-- Premium / obuna / to'lov / admin-panel jadvallari (plans, payments,
+-- bot_settings) OLIB TASHLANGAN.  Bu DDL mavjud jadvallarni O'CHIRMAYDI;
+-- eski plans/payments jadvallari qolaversa hech narsaga zarari yo'q.
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS users (
@@ -19,36 +24,9 @@ CREATE TABLE IF NOT EXISTS users (
     username       TEXT,
     first_name     TEXT,
     last_name      TEXT,
-    is_banned      BOOLEAN NOT NULL DEFAULT FALSE,
-    access_status  TEXT NOT NULL DEFAULT 'approved',  -- tarixiy ustun; kirish hamma uchun ochiq
-    reviewed_by    BIGINT,
-    reviewed_at    TEXT,
-    is_admin       BOOLEAN NOT NULL DEFAULT FALSE,
-    premium_until  TEXT,
     connected_at   TEXT,
     last_activity  TEXT,
     created_at     TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS plans (
-    id             BIGSERIAL PRIMARY KEY,
-    title          TEXT NOT NULL,
-    duration_days  INTEGER NOT NULL,
-    price          BIGINT NOT NULL,
-    description    TEXT NOT NULL DEFAULT '',
-    is_active      BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at     TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS payments (
-    id               BIGSERIAL PRIMARY KEY,
-    user_id          BIGINT NOT NULL,
-    plan_id          BIGINT NOT NULL,
-    receipt_file_id  TEXT NOT NULL,
-    status           TEXT NOT NULL DEFAULT 'pending',
-    created_at       TEXT NOT NULL,
-    reviewed_at      TEXT,
-    reviewed_by      BIGINT
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -76,20 +54,9 @@ CREATE INDEX IF NOT EXISTS idx_events_time         ON events (occurred_at);
 CREATE INDEX IF NOT EXISTS idx_events_type         ON events (event_type);
 CREATE INDEX IF NOT EXISTS idx_events_user         ON events (user_id);
 CREATE INDEX IF NOT EXISTS idx_events_chat_message ON events (chat_id, message_id);
-CREATE INDEX IF NOT EXISTS idx_payments_stat       ON payments (status);
 
 -- Bir martalik SQLite import markeri (bot o'zi boshqaradi).
 CREATE TABLE IF NOT EXISTS supabase_migrations (
     name TEXT PRIMARY KEY,
     applied_at TEXT NOT NULL
 );
-
--- Bot sozlamalari (kalit-qiymat) + boshlang'ich qiymat:
--- Premium bo'limi YOPIQ boshlanadi (admin panelda yoqiladi).
-CREATE TABLE IF NOT EXISTS bot_settings (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-
-INSERT INTO bot_settings (key, value) VALUES ('premium_enabled', '0')
-ON CONFLICT (key) DO NOTHING;

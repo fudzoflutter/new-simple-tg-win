@@ -4,6 +4,9 @@ Foydalanuvchiga qaratilgan inline klaviaturalar (o'zbek tilida).
 Har bir klaviatura kichik funksiya — handlerlar toza qoladi.  Ranglar
 (``style=``) va premium emoji ikonkalari (``icon_custom_emoji_id``)
 :func:`app.utils.ui.btn` orqali beriladi.
+
+Premium/obuna bo'limlari OLIB TASHLANGAN (yangi talab): menyu faqat
+Statistika, Ulanish, Foydalanuvchilar va Havola tozalashdan iborat.
 """
 
 from __future__ import annotations
@@ -11,24 +14,18 @@ from __future__ import annotations
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.emoji_config import EMOJI
-from app.utils.texts import plan_button_label
 from app.utils.ui import BtnStyle, btn, kb
 
 # Callback data prefikslari — handlerlar ham shulardan foydalanadi.
 CB_STATS = "user:stats"
 CB_CONNECT = "user:connect"
-CB_PREMIUM = "user:premium"
-CB_MY_SUB = "user:mysub"
-CB_PLAN = "user:plan:"
+CB_USERS = "user:users"
+CB_CLEAN = "user:clean"
 CB_BACK_MENU = "user:menu"
 
 
-def main_menu(*, connected: bool = False, premium_enabled: bool = False) -> InlineKeyboardMarkup:
-    """Start menyusi: Statistika, Ulanish, (ixtiyoriy) Premium.
-
-    Premium tugmasi standartda YASHIRIN (yangi talab) — admin paneldagi
-    "Premium bo'limi" tugmasi orqali yoqilgandagina ko'rinadi.
-    """
+def main_menu(*, connected: bool = False) -> InlineKeyboardMarkup:
+    """Start menyusi: Statistika, Ulanish, Foydalanuvchilar, Havola tozalash."""
     connect_label = (
         f"{EMOJI.menu_connect.fallback} Ulangan ✓"
         if connected
@@ -51,46 +48,22 @@ def main_menu(*, connected: bool = False, premium_enabled: bool = False) -> Inli
                 emoji_id=EMOJI.menu_connect.emoji_id,
             )
         ],
-    ]
-    if premium_enabled:
-        rows.append(
-            [
-                btn(
-                    f"{EMOJI.menu_premium.fallback} Premium",
-                    CB_PREMIUM,
-                    style=BtnStyle.SUCCESS,
-                    emoji_id=EMOJI.menu_premium.emoji_id,
-                )
-            ]
-        )
-    # Yangi talab: obuna holatini tekshirish tugmasi (hamma uchun ko'rinadi —
-    # bosganda 'faol emas' yoki qolgan vaqt ko'rsatiladi).
-    rows.append(
         [
             btn(
-                f"{EMOJI.menu_my_sub.fallback} Mening obunam",
-                CB_MY_SUB,
+                f"{EMOJI.users.fallback} Foydalanuvchilar",
+                CB_USERS,
                 style=BtnStyle.PRIMARY,
-                emoji_id=EMOJI.menu_my_sub.emoji_id,
             )
-        ]
-    )
-    return kb(rows)
-
-
-def my_sub_menu() -> InlineKeyboardMarkup:
-    """«Mening obunam» ekrani: tariflarga va menyuga qaytish."""
-    return kb(
+        ],
         [
-            [btn(
-                f"{EMOJI.menu_premium.fallback} Tariflar",
-                CB_PREMIUM,
+            btn(
+                f"🔗 Havola tozalash",
+                CB_CLEAN,
                 style=BtnStyle.SUCCESS,
-                emoji_id=EMOJI.menu_premium.emoji_id,
-            )],
-            [_back_btn()],
-        ]
-    )
+            )
+        ],
+    ]
+    return kb(rows)
 
 
 def _back_btn():
@@ -124,45 +97,6 @@ def connect_menu(bot_username: str = "") -> InlineKeyboardMarkup:
     return kb(
         [
             [InlineKeyboardButton(**settings_button)],
-            [_back_btn()],
-        ]
-    )
-
-
-def premium_plans(plans: list[dict]) -> InlineKeyboardMarkup:
-    """Har bir faol tarif uchun bitta rangli tugma ('30 kun - 10 000').
-
-    Tariflar RO'YXATI sifatida beriladi (DBdan oldin o'qilgan) — handler
-    boshqa so'rov bilan parallel oladi, ikki marta so'ramaydi.
-    """
-    if not plans:
-        return kb([[btn("🔙 Menyuga qaytish", CB_BACK_MENU, style=BtnStyle.DANGER)]])
-
-    rows = [
-        [
-            btn(
-                plan_button_label(p["title"], p["duration_days"], p["price"]),
-                f"{CB_PLAN}{p['id']}",
-                style=BtnStyle.SUCCESS,
-                emoji_id=EMOJI.menu_premium.emoji_id,
-            )
-        ]
-        for p in plans
-    ]
-    rows.append([_back_btn()])
-    return kb(rows)
-
-
-def premium_checkout(plan_id: int) -> InlineKeyboardMarkup:
-    """To'lov oynasi: tariflarga va menyuga qaytish (chek — foto sifatida)."""
-    return kb(
-        [
-            [btn(
-                f"{EMOJI.menu_back.fallback} Tariflarga",
-                CB_PREMIUM,
-                style=BtnStyle.PRIMARY,
-                emoji_id=EMOJI.menu_back.emoji_id,
-            )],
             [_back_btn()],
         ]
     )

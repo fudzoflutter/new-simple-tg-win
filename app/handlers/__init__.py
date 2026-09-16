@@ -1,8 +1,10 @@
 """
 Telegram update handlers, split by audience:
 
-* :mod:`app.handlers.user`      – /start, menu, stats, connect, premium
+* :mod:`app.handlers.user`      – /start, menu, stats, user count, connect,
+                                  link cleaning
 * :mod:`app.handlers.business`  – business connection + activity reports
-* :mod:`app.handlers.admin_*`   – owner-only panel features
+
+Admin-panel / premium handlers OLIB TASHLANGAN (yangi talab).
 """
 

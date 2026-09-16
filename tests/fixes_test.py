@@ -1,5 +1,5 @@
 """
-Offline tests for the 2026-09-14 bug-fix batch.
+Offline tests for the slim-bot cleanup batch.
 
 Run from the project root:
 
@@ -7,15 +7,12 @@ Run from the project root:
 
 Covers (no Telegram network):
 
-PART A — Daily limit: set -> counts only TODAY's cached messages ->
-         premium removes the limit -> removing premium restores it ->
-         0 = unlimited.
-PART B — Cached-text management: latest cached message is found,
-         updated in place, and deleted.
-PART C — Payments with plan name: pending list JOIN includes plan_title;
-         approval stores premium.
-PART D — Ban guard helpers: admin rows protected; ban-cache invalidation.
-PART E — SQLite seeds premium_enabled=0 (Postgres parity).
+PART A — Cached-text management: the latest cached message is found,
+         updated in place, and a fresh row wins over an older one.
+PART B — Schema parity: only users / events / connections exist (no
+         plans / payments / bot_settings) and events.sender_id is present.
+PART C — Housekeeping: prunes keep the newest rows, counts stay correct.
+PART D — Reporter regression: the daily limit / premium logic is GONE.
 """
 
 from __future__ import annotations
@@ -24,7 +21,7 @@ import asyncio
 import os
 import sys
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -38,160 +35,102 @@ os.environ["DB_PATH"] = str(Path(_tmpdir) / "test.db")
 os.environ.pop("SUPABASE_DB_URL", None)
 
 
-async def part_a_limit() -> None:
+async def part_a_cached_text() -> None:
     from app.database import db
-    from app.services.reporter import Reporter
 
     await db.init()
     try:
         uid = 93001
-        await db.upsert_user(uid, "limituser", "Limit", None)
-
-        # 0 / missing = unlimited.
-        assert await db.get_setting_cached(f"limit:{uid}", "0") == "0"
-        await db.set_setting(f"limit:{uid}", "3")
-
-        # Two cached messages today -> below limit of 3.
-        await db.add_event(uid, "text", "one", chat_id=1, message_id=1, sender_id=uid)
-        await db.add_event(uid, "photo", "file:x|photo|", chat_id=1, message_id=2, sender_id=uid)
-        reporter = Reporter(bot=None)  # bot not used by _limit_reached
-        assert await reporter._limit_reached(uid) is False
-
-        # Third message today -> limit reached.
-        await db.add_event(uid, "text", "two", chat_id=1, message_id=3, sender_id=uid)
-        assert await reporter._limit_reached(uid) is True
-
-        # Verify the since-window math used by the limit counter.
-        since = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        n_today = await db.count_user_events_since(
-            uid, since, ["text", "photo", "video", "sticker", "animation"]
-        )
-        assert n_today == 3, n_today
-        n_week = await db.count_user_events_since(
-            uid, datetime.now() - timedelta(days=7), ["text"]
-        )
-        assert n_week == 2, n_week  # only 'one' and 'two' are text so far
-
-        # Premium removes the limit even if it is set.
-        await db.extend_premium(uid, 7)
-        await db.add_event(uid, "text", "three", chat_id=1, message_id=4, sender_id=uid)
-        await db.add_event(uid, "text", "four", chat_id=1, message_id=5, sender_id=uid)
-        assert await reporter._limit_reached(uid) is False
-
-        # Granting premium via the panel also CLEARS the stored limit.
-        await db.set_setting(f"limit:{uid}", "0")
-        assert await db.get_setting_cached(f"limit:{uid}", "0") == "0"
-        print("PART A (daily limit) PASSED ✅")
-    finally:
-        await db.close()
-
-
-async def part_b_cached_text() -> None:
-    from app.database import db
-
-    await db.init()
-    try:
-        uid = 93002
         await db.upsert_user(uid, "cacheuser", "Cache", None)
         await db.add_event(
             uid, "text", "original", chat_id=77, message_id=10, sender_id=uid
         )
 
-        latest = await db.recent_events(limit=50)
-        mine = [r for r in latest if r.get("user_id") == uid and r.get("message_id")]
-        assert mine, "cached message row must exist"
-        event = mine[0]
-
-        # Update in place (the panel's "Almashtirish" flow).
+        # Update in place (the reporter's edit flow).
         ok = await db.update_event_details(77, 10, "replaced")
         assert ok, "update_event_details must find the cached row"
         fresh = await db.get_event_by_message(77, 10)
         assert fresh["details"] == "replaced"
 
-        # Delete (the panel's "Nusxani o'chirish" flow).
-        assert await db.delete_cached_event(event["id"]) is True
-        assert await db.delete_cached_event(event["id"]) is False
-        assert await db.get_event_by_message(77, 10) is None
-        print("PART B (cached text) PASSED ✅")
+        # A newer row with the same (chat, message) wins.
+        await db.add_event(
+            uid, "text", "second", chat_id=77, message_id=10, sender_id=uid
+        )
+        assert (await db.get_event_by_message(77, 10))["details"] == "second"
+        assert await db.update_event_details(77, 10, "latest")
+        assert (await db.get_event_by_message(77, 10))["details"] == "latest"
+        print("PART A (cached text) PASSED ✅")
     finally:
         await db.close()
 
 
-async def part_c_payments() -> None:
+async def part_b_schema_parity() -> None:
+    from app.database import db
+
+    await db.init()
+    try:
+        cursor = await db._backend.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+        tables = {row[0] for row in await cursor.fetchall()}
+        await cursor.close()
+        assert {"users", "events", "connections"} <= tables, tables
+        for legacy in ("plans", "payments", "bot_settings"):
+            assert legacy not in tables, f"legacy table {legacy} still created"
+
+        cursor = await db._backend.conn.execute("PRAGMA table_info(events)")
+        cols = {row[1] for row in await cursor.fetchall()}
+        await cursor.close()
+        assert "sender_id" in cols, "events.sender_id migration missing"
+        print("PART B (schema parity) PASSED ✅")
+    finally:
+        await db.close()
+
+
+async def part_c_housekeeping() -> None:
     from app.database import db
 
     await db.init()
     try:
         uid = 93003
-        await db.upsert_user(uid, "payuser", "Pay", None)
-        plan_id = await db.create_plan("Fix plan", 30, 12345, "d")
-        pay_id = await db.create_payment(uid, plan_id, "receipt_x")
+        await db.upsert_user(uid, "pruneuser", "Prune", None)
+        for i in range(10):
+            await db.add_event(uid, "text", f"m{i}", chat_id=1, message_id=i,
+                               sender_id=uid)
+        assert await db.count_user_events(uid) == 10
+        since = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        assert await db.count_events(since=since) >= 10
 
-        rows = await db.pending_payments_with_plans()
-        row = next((r for r in rows if r["id"] == pay_id), None)
-        assert row is not None, "pending payment must be listed"
-        assert row["plan_title"] == "Fix plan", row
-        assert row["duration_days"] == 30
-
-        until = await db.extend_premium(uid, row["duration_days"])
-        assert until is not None
-        await db.set_payment_status(pay_id, "approved", 111111111)
-        assert all(p["id"] != pay_id for p in await db.pending_payments())
-
-        # Deleting the plan must not crash the JOIN (plan_title becomes None).
-        await db.delete_plan(plan_id)
-        rows = await db.pending_payments_with_plans()
-        assert all(r["id"] != pay_id for r in rows)  # already approved anyway
-        print("PART C (payments with plan) PASSED ✅")
+        await db.prune_events(keep=3)
+        assert await db.count_user_events(uid) == 3
+        print("PART C (housekeeping) PASSED ✅")
     finally:
         await db.close()
 
 
-async def part_d_ban_guard() -> None:
-    from app import middlewares
-    from app.database import db
-    from app.middlewares import invalidate_ban_cache
+def part_d_reporter_no_limit() -> None:
+    from app.services import reporter as rep
+    from app.services.reporter import Reporter
 
-    # Cache invalidation helper must be a no-op-safe function.
-    invalidate_ban_cache(42)  # never raises even for unknown ids
-    assert 42 not in middlewares._ban_cache
-
-    await db.init()
-    try:
-        # Admin-flagged row exists -> panel logic must refuse to ban it.
-        await db.upsert_user(93004, "adminuser", "Admin", None)
-        await db.set_admin(93004, True)
-        row = await db.get_user(93004)
-        assert bool(row and row.get("is_admin"))
-        # (the handler-level refusal itself is covered by _is_admin_row logic)
-        from app.handlers.admin_panel import _is_admin_row
-
-        assert _is_admin_row(row) is True
-        assert _is_admin_row({"is_admin": 0}) is False
-        assert _is_admin_row(None) is False
-        print("PART D (ban guard) PASSED ✅")
-    finally:
-        await db.close()
-
-
-async def part_e_seed_parity() -> None:
-    from app.database import db
-
-    await db.init()
-    try:
-        value = await db.get_setting("premium_enabled", "missing")
-        assert value in ("0", "1"), f"premium_enabled must be seeded, got {value!r}"
-        print("PART E (settings seed parity) PASSED ✅")
-    finally:
-        await db.close()
+    assert not hasattr(Reporter, "_limit_reached"), "daily limit should be gone"
+    assert not hasattr(Reporter, "_notify_limit_once")
+    assert not hasattr(rep, "LIMIT_REACHED_USER", ), "premium limit text should be gone"
+    # The premium/admin modules must no longer be importable.
+    for module in ("app.states", "app.filters", "app.handlers.admin_panel",
+                   "app.keyboards.admin_kb", "app.services.broadcaster"):
+        try:
+            __import__(module)
+        except ModuleNotFoundError:
+            continue
+        raise AssertionError(f"{module} should have been removed")
+    print("PART D (reporter regression) PASSED ✅")
 
 
 async def main() -> None:
-    await part_a_limit()
-    await part_b_cached_text()
-    await part_c_payments()
-    await part_d_ban_guard()
-    await part_e_seed_parity()
+    await part_a_cached_text()
+    await part_b_schema_parity()
+    await part_c_housekeeping()
+    part_d_reporter_no_limit()
     print("ALL FIXES TESTS PASSED ✅")
 
 

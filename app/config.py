@@ -99,22 +99,11 @@ class Settings:
     # "Connection pooling" URI (postgresql://postgres.xxxx:...:6543/postgres).
     supabase_db_url: str = field(default_factory=lambda: _env("SUPABASE_DB_URL"))
 
-    # --- Payments (shown on the premium checkout screen) ---------------------
-    # Edit these directly here, no .env needed.
-    payment_card_number: str = "4728 8700 0481 4561"
-    payment_card_holder: str = "J. N"
-    # Optional bank name shown above the card number.
-
     # --- Activity report layout -----------------------------------------------
     # Sarlavha bilan asosiy qatorlar ORASIDAGI bo'sh qatorlar soni.
     # 1 = "✏️ Xabar tahrirlandi" va "👤 Kim:" orasida BITTA bo'sh qator
     # (hozirgi ko'rinish).  0 = yopiq, 2 = juda keng.
     report_line_gap: int = 1
-
-    # --- Premium section visibility (new requirement) -------------------------
-    # Premium tugmasi standartda YASHIRIN.  Admin paneldagi "Premium bo'limi"
-    # tugmasi orqali yoqiladi.  Bu boshlang'ich qiymat — holat DBda saqlanadi.
-    premium_enabled_by_default: bool = False
 
     # EMOJILAR endi app/emoji_config.py da (yagona ro'yxat) — bu yerda emas.
 

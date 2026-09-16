@@ -1,2 +1,2 @@
-"""Inline keyboards for user and admin interfaces."""
+"""Inline keyboards for the user interface."""
 

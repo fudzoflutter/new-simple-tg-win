@@ -20,13 +20,13 @@ PART 1 — Backend parity: the full CRUD matrix through the SQLite backend
          (offline; never touches the developer's real bot.db).
 
 PART 2 — DDL smoke (optional): runs app/database.py SCHEMA against a local
-         Postgres and verifies tables / indexes / the bot_settings seed.
+         Postgres and verifies the tables / indexes.
 
 PART 3 — Live integration (optional, needs SUPABASE_DB_URL): launched as a
          CHILD PROCESS so ``app.config`` snapshots the URL at import time
          exactly like production does.  Verifies the backend auto-selects
-         Postgres, the remote schema exists (7 tables), the same CRUD
-         matrix passes on Supabase, and the importer marker is queryable.
+         Postgres, the remote schema exists (users / events / connections /
+         supabase_migrations), and the same CRUD matrix passes on Supabase.
          Test rows are wiped before AND after, so re-runs are safe.
 
 NOTE: the Postgres backend expects the Supabase *pooler* URI (port 6543,
@@ -49,6 +49,9 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 PASS = "\u2705"
+
+# Bot faqat shu jadvallar bilan ishlaydi (premium/plans/payments OLIB TASHLANGAN).
+CORE_TABLES = ("users", "events", "connections", "supabase_migrations")
 
 # ---------------------------------------------------------------------------
 # Process setup: keep the throwaway DB + separate the LIVE url.
@@ -84,39 +87,19 @@ async def run_crud_suite(backend_name: str) -> None:
 
     await db.init()
     try:
-        # -- users & access ---------------------------------------------------
+        # -- users ------------------------------------------------------------
         await db.upsert_user(TEST_USER, "parityuser", "Parity", None)
         row = await db.get_user(TEST_USER)
         assert row is not None, "upsert_user did not insert"
-        # Kirish tasdiqlash tizimi olib tashlandi — hamma darhol 'approved'.
-        assert row["access_status"] == "approved", row["access_status"]
-        assert row["is_banned"] in (0, False)
+        assert row["username"] == "parityuser"
         await db.touch_user(TEST_USER)
         assert (await db.get_user(TEST_USER))["last_activity"] is not None
+        assert await db.count_users() >= 1
+        assert await db.count_online() >= 1
+        assert any(u["user_id"] == TEST_USER for u in await db.all_users())
+        assert any(u["user_id"] == TEST_USER for u in await db.online_users())
 
-        # -- premium ------------------------------------------------------------
-        until = await db.extend_premium(TEST_USER, 30)
-        assert until is not None
-        await db.set_premium(TEST_USER, None)
-        assert (await db.get_user(TEST_USER))["premium_until"] is None
-
-        # -- plans --------------------------------------------------------------
-        plan_id = await db.create_plan("Parity plan", 30, 9000, "desc")
-        plan = await db.get_plan(plan_id)
-        assert plan["price"] == 9000 and plan["duration_days"] == 30
-        await db.update_plan(plan_id, price=7777, title="Parity v2")
-        assert (await db.get_plan(plan_id))["price"] == 7777
-        await db.set_plan_active(plan_id, False)
-        assert not any(p["id"] == plan_id for p in await db.active_plans())
-
-        # -- payments -------------------------------------------------------------
-        pay_id = await db.create_payment(TEST_USER, plan_id, "receipt_parity")
-        joined = await db.payment_with_plan(pay_id)
-        assert joined["duration_days"] == 30
-        await db.set_payment_status(pay_id, "approved", 111111111)
-        assert all(p["id"] != pay_id for p in await db.pending_payments())
-
-        # -- events -----------------------------------------------------------------
+        # -- events -----------------------------------------------------------
         await db.add_event(
             TEST_USER, "edit", "old -> new",
             chat_id=TEST_CHAT, message_id=101, sender_id=TEST_USER,
@@ -128,27 +111,23 @@ async def run_crud_suite(backend_name: str) -> None:
         assert (await db.get_event_by_message(TEST_CHAT, 101))["details"] == (
             "old -> newer"
         )
+        assert await db.count_user_events(TEST_USER, "edit") >= 1
+        assert await db.count_events() >= 1
+        assert await db.recent_events(limit=5)
         await db.prune_events(keep=200_000)  # must not raise
 
-        # -- connections ----------------------------------------------------------
+        # -- connections ------------------------------------------------------
         await db.upsert_connection("bc_parity", TEST_USER, True, user_chat_id=TEST_USER)
         conn = await db.get_connection("bc_parity")
         assert conn["is_enabled"] in (1, True) and conn["connected_at"]
+        assert TEST_USER in await db.connected_user_ids()
+        assert await db.connections_for_user(TEST_USER)
         await db.upsert_connection("bc_parity", TEST_USER, False)
         conn = await db.get_connection("bc_parity")
         assert not conn["is_enabled"] and conn["disconnected_at"]
         await db.upsert_connection("bc_parity", TEST_USER, True)
         assert not (await db.get_connection("bc_parity"))["disconnected_at"]
 
-        # -- bot settings ----------------------------------------------------------
-        await db.set_setting("test_flag", "1")
-        assert await db.get_setting("test_flag") == "1"
-        assert await db.get_setting("premium_enabled", "") in ("0", "1")
-        assert await db.get_setting("missing_key", "fallback") == "fallback"
-
-        # -- statistics ----------------------------------------------------------------
-        assert await db.count_user_events(TEST_USER, "edit") >= 1
-        assert await db.count_events() >= 0
         print(f"  [{backend_name}] CRUD matrix OK")
     finally:
         await db.close()
@@ -175,11 +154,25 @@ async def part2_ddl_smoke() -> None:
     conn = await asyncpg.connect(url)
     try:
         await conn.execute(SCHEMA)
-        # The seed row must exist exactly once.
-        n = await conn.fetchval(
-            "SELECT COUNT(*) FROM bot_settings WHERE key = 'premium_enabled'"
+        # Faqat asosiy jadvallar yaratilishi kerak.
+        tables = await conn.fetchval(
+            """
+            SELECT COUNT(*) FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name = ANY($1::text[])
+            """,
+            list(CORE_TABLES),
         )
-        assert n == 1, f"premium_enabled seed count = {n}"
+        assert tables == len(CORE_TABLES), f"expected {len(CORE_TABLES)} tables, got {tables}"
+        # Hech qanday premium jadval qolmasligi kerak.
+        legacy = await conn.fetchval(
+            """
+            SELECT COUNT(*) FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name IN ('plans', 'payments', 'bot_settings')
+            """
+        )
+        assert legacy == 0, f"legacy premium tables still created: {legacy}"
         # The hot-path indexes must exist.
         idx = await conn.fetchval(
             """
@@ -201,9 +194,6 @@ async def _wipe_test_rows(conn: Any) -> None:
     """Remove every row the test creates (idempotent re-runs)."""
     await conn.execute("DELETE FROM events WHERE user_id = $1", TEST_USER)
     await conn.execute("DELETE FROM connections WHERE user_id = $1", TEST_USER)
-    await conn.execute("DELETE FROM payments WHERE user_id = $1", TEST_USER)
-    await conn.execute("DELETE FROM plans WHERE title LIKE 'Parity%'")
-    await conn.execute("DELETE FROM bot_settings WHERE key = 'test_flag'")
     await conn.execute("DELETE FROM users WHERE user_id = $1", TEST_USER)
 
 
@@ -224,13 +214,14 @@ async def part3_live() -> None:
                 """
                 SELECT COUNT(*) FROM information_schema.tables
                 WHERE table_schema = 'public'
-                  AND table_name IN
-                      ('users','plans','payments','events','connections',
-                       'bot_settings','supabase_migrations')
-                """
+                  AND table_name = ANY($1::text[])
+                """,
+                list(CORE_TABLES),
             )
-            assert tables == 7, f"expected 7 tables, found {tables}"
-        print("  remote schema verified (7 tables) " + PASS)
+            assert tables == len(CORE_TABLES), (
+                f"expected {len(CORE_TABLES)} tables, found {tables}"
+            )
+        print(f"  remote schema verified ({len(CORE_TABLES)} tables) " + PASS)
 
         # 2) Clean start (in case a previous run left rows behind)...
         async with db._backend.pool.acquire() as conn:
