@@ -23,8 +23,10 @@ from app.config import ensure_configured, settings
 from app.database import db
 from app.handlers import admin, business, user
 from app.middlewares import RegisterUserMiddleware
-from app.services import access
+from app.services import access, instance_lock
+from app.services.duplicate_watch import install as watch_duplicate_polling
 from app.services.watchdog import run_watchdog
+from app.utils import texts
 from app.utils.logger import setup_logging
 from app.utils.tasks import drain
 
@@ -103,6 +105,28 @@ async def _drain_pending_updates(bot: Bot) -> None:
         logger.warning("Boshqa nusxa polling qilmoqda — drain o'tkazib yuborildi")
 
 
+async def _notify_duplicate_poller(bot: Bot, total: int) -> None:
+    """409 Conflict — botni boshqa nusxa ham poll qilyapti (jimgina qolmasin).
+
+    Bu xabar eng muhim diagnostika: aiogram 409 xatosini o'zi yutib qo'yadi,
+    ya'ni bot "ishlayapti" ko'rinadi-yu, update'larning bir qismi BOSHQA
+    nusxaga ketadi va ba'zi hisobotlar umuman kelmaydi.
+    """
+    logger.error(
+        "409 CONFLICT: botni boshqa nusxa ham poll qilmoqda (jami %s ta) — "
+        "update'lar ikki nusxa orasida bo'linib ketmoqda!",
+        total,
+    )
+    try:
+        await bot.send_message(
+            settings.admin_id,
+            texts.DUPLICATE_POLLER.format(count=total),
+            parse_mode="HTML",
+        )
+    except Exception:  # noqa: BLE001 – ogohlantirish yuborilmasa ham davom
+        logger.info("409 ogohlantirishini yuborib bo'lmadi (admin chat?)")
+
+
 async def _watchdog_supervisor() -> None:
     """run_watchdog ni doim yashab turadi (o'lsa 30 s dan keyin tiklaydi)."""
     while True:
@@ -126,6 +150,15 @@ async def main() -> None:
     # update'dagi ruxsat tekshiruvi xotiradan (dict) o'qiladi — DB so'rovisiz.
     await access.load()
 
+    # --- BIR NUSXA QULFI ------------------------------------------------------
+    # Telegram bitta tokenga faqat BITTA getUpdates beradi: ikki nusxa birga
+    # ishlasa update'lar bo'linib ketadi (ba'zi hisobotlar kelmaydi).
+    # Shuning uchun ikkinchi nusxa polling boshlamaydi va sababini aytadi.
+    holder = await instance_lock.acquire()
+    if holder is not None:
+        logger.error(instance_lock.duplicate_start_message(holder))
+        await db.close()
+        return
     bot = Bot(
         token=settings.bot_token,
         # HTML everywhere by default – handlers can simply include tags.
@@ -154,6 +187,16 @@ async def main() -> None:
     # bo'lib qolmaydi.
     watchdog_task = asyncio.create_task(_watchdog_supervisor())
 
+    # Bir nusxa qulfining heartbeat'i: 20 sekundda bitta yengil UPDATE.
+    lock_task = asyncio.create_task(instance_lock.heartbeat_loop())
+
+    # 409 (boshqa nusxa polling qilmoqda) bo'lsa adminga ANIQ xabar yuboriladi
+    # — aks holda muammo jimgina davom etadi va faqat "ba'zi hisobot
+    # kelmayapti" ko'rinishida seziladi.
+    watch_duplicate_polling(
+        lambda total: _notify_duplicate_poller(bot, total)
+    )
+
     # --- run ------------------------------------------------------------------
     logger.info("Bot is starting (admin=%s)...", settings.admin_id)
     try:
@@ -162,9 +205,13 @@ async def main() -> None:
         await dp.start_polling(bot)
     finally:
         watchdog_task.cancel()
+        lock_task.cancel()
         # Fonda ketayotgan yozuvlar (masalan ro'yxatga olish) tugasin —
         # aks holda baza yopilgach ular xato beradi.
         await drain()
+        # Qulfni bo'shatamiz: keyingi start darhol ishga tushadi (aks holda
+        # qulf STALE_SECONDS gacha "band" bo'lib turadi).
+        await instance_lock.release()
         await db.close()
         await bot.session.close()
         logger.info("Bot stopped.")

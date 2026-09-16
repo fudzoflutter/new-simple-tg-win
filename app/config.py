@@ -98,6 +98,14 @@ class Settings:
     # Tafsilot: app/services/access.py
     test_mode: bool = field(default_factory=lambda: _env("TEST_MODE", "0") == "1")
 
+    # --- Bir nusxa qulfi (takroriy 409 ni to'xtatadi) ------------------------
+    # Bot ishga tushganda bazadagi instance_lock ga "men tirikman" deb yozadi.
+    # Boshqa TIRIK nusxa bo'lsa, yangi nusxa pollingni boshlamaydi (sababini
+    # aytib to'xtaydi) — Telegram baribir faqat bittasiga update beradi.
+    # FORCE_POLL=1 — qulfni o'chirib yuboradi (ikki nusxa birga ishlasa
+    # xabarlar bo'linib ketishini HISOBGA OLGAN holda).
+    force_poll: bool = field(default_factory=lambda: _env("FORCE_POLL", "0") == "1")
+
     # --- Storage ------------------------------------------------------------
     db_path: str = field(default_factory=lambda: _env("DB_PATH", "bot.db"))
 

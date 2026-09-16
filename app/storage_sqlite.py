@@ -73,6 +73,15 @@ CREATE TABLE IF NOT EXISTS access (
     created_at  TEXT NOT NULL,
     decided_at  TEXT
 );
+
+CREATE TABLE IF NOT EXISTS instance_lock (
+    id           TEXT PRIMARY KEY,
+    instance     TEXT NOT NULL,
+    host         TEXT,
+    pid          INTEGER,
+    started_at   TEXT NOT NULL,
+    heartbeat_at TEXT NOT NULL
+);
 """
 
 
@@ -432,4 +441,61 @@ class SqliteDatabase:
                 decided_at = excluded.decided_at
             """,
             (user_id, status, username, first_name, decided_by, now, decided_at),
+        )
+
+    # ======================================================================
+    # INSTANCE LOCK — bir vaqtda faqat BITTA nusxa polling qilishi uchun
+    # (Postgres versiyasi bilan AYNAN bir xil xatti-harakat)
+    # ======================================================================
+
+    async def claim_instance_lock(
+        self, instance: str, host: str, pid: int, stale_seconds: float
+    ) -> Optional[dict]:
+        """Qulfni ATOMIK olish; ``None`` — endi bizda, aks holda egasi."""
+        now = now_iso()
+        stale_before = (
+            datetime.now() - timedelta(seconds=stale_seconds)
+        ).isoformat(timespec="seconds")
+        owned = await self._fetchval(
+            self._q(
+                """
+            INSERT INTO instance_lock
+                (id, instance, host, pid, started_at, heartbeat_at)
+            VALUES ('bot', $1, $2, $3, $4, $5)
+            ON CONFLICT (id) DO UPDATE SET
+                instance     = excluded.instance,
+                host         = excluded.host,
+                pid          = excluded.pid,
+                started_at   = excluded.started_at,
+                heartbeat_at = excluded.heartbeat_at
+            WHERE instance_lock.instance = excluded.instance
+               OR instance_lock.heartbeat_at <= $6
+            RETURNING instance
+            """
+            ),
+            (instance, host, pid, now, now, stale_before),
+        )
+        if owned:
+            return None
+        return await self._fetch_one(
+            "SELECT * FROM instance_lock WHERE id = 'bot'"
+        )
+
+    async def heartbeat_instance_lock(self, instance: str) -> bool:
+        value = await self._fetchval(
+            self._q(
+                """
+            UPDATE instance_lock SET heartbeat_at = $1
+            WHERE id = 'bot' AND instance = $2
+            RETURNING 1
+            """
+            ),
+            (now_iso(), instance),
+        )
+        return bool(value)
+
+    async def release_instance_lock(self, instance: str) -> None:
+        await self._execute(
+            "DELETE FROM instance_lock WHERE id = 'bot' AND instance = ?",
+            (instance,),
         )

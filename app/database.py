@@ -79,6 +79,15 @@ CREATE TABLE IF NOT EXISTS access (
     decided_at  TEXT
 );
 
+CREATE TABLE IF NOT EXISTS instance_lock (
+    id           TEXT PRIMARY KEY,
+    instance     TEXT NOT NULL,
+    host         TEXT,
+    pid          BIGINT,
+    started_at   TEXT NOT NULL,
+    heartbeat_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_events_time   ON events (occurred_at);
 CREATE INDEX IF NOT EXISTS idx_events_type   ON events (event_type);
 CREATE INDEX IF NOT EXISTS idx_events_user   ON events (user_id);
@@ -252,6 +261,28 @@ class Database:
 
     async def connections_for_user(self, user_id: int) -> list[dict]:
         return await self._backend.connections_for_user(user_id)
+
+    # -- instance lock (bir vaqtda faqat BITTA nusxa polling qiladi) --------
+
+    async def claim_instance_lock(
+        self, instance: str, host: str, pid: int, stale_seconds: float
+    ) -> Optional[dict]:
+        """Qulfni olishga urinadi.
+
+        ``None`` — qulf endi BIZDA (polling boshlash mumkin).  Aks holda
+        hozirgi egasi haqidagi yozuv qaytadi (boshqa nusxa tirik).
+        """
+        return await self._backend.claim_instance_lock(
+            instance, host, pid, stale_seconds
+        )
+
+    async def heartbeat_instance_lock(self, instance: str) -> bool:
+        """Qulf hali bizda ekanini tasdiqlaydi (heartbeat yangilanadi)."""
+        return await self._backend.heartbeat_instance_lock(instance)
+
+    async def release_instance_lock(self, instance: str) -> None:
+        """Chiqishda qulfni bo'shatadi (keyingi start darhol ishga tushadi)."""
+        await self._backend.release_instance_lock(instance)
 
     # -- access control (allow / deny / ban) --------------------------------
 
@@ -496,6 +527,70 @@ class PostgresDatabase:
             user_id,
         )
         return _b(value)
+
+    # ======================================================================
+    # INSTANCE LOCK
+    # ======================================================================
+
+    async def claim_instance_lock(
+        self, instance: str, host: str, pid: int, stale_seconds: float
+    ) -> Optional[dict]:
+        """Qulfni ATOMIK olish (yoki mavjud egasini qaytarish).
+
+        Bir SQL bayonotda: yozuv yo'q bo'lsa yaratamiz, mavjud bo'lsa
+        FAQAT egasi o'zimiz bo'lsak yoki heartbeat ``stale_seconds`` dan
+        eski bo'lsa (nusxa o'lgan) egallaymiz.  Shuning uchun ikki nusxa
+        bir vaqtda ishga tushsa ham faqat bittasi qulfni oladi.
+        """
+        now = _now()
+        stale_before = (
+            datetime.now() - timedelta(seconds=stale_seconds)
+        ).isoformat(timespec="seconds")
+        owned = await self._fetchval(
+            """
+            INSERT INTO instance_lock
+                (id, instance, host, pid, started_at, heartbeat_at)
+            VALUES ('bot', $1, $2, $3, $4, $4)
+            ON CONFLICT (id) DO UPDATE SET
+                instance     = EXCLUDED.instance,
+                host         = EXCLUDED.host,
+                pid          = EXCLUDED.pid,
+                started_at   = EXCLUDED.started_at,
+                heartbeat_at = EXCLUDED.heartbeat_at
+            WHERE instance_lock.instance = EXCLUDED.instance
+               OR instance_lock.heartbeat_at <= $5
+            RETURNING instance
+            """,
+            instance,
+            host,
+            pid,
+            now,
+            stale_before,
+        )
+        if owned:
+            return None
+        return await self._fetch_one(
+            "SELECT * FROM instance_lock WHERE id = 'bot'"
+        )
+
+    async def heartbeat_instance_lock(self, instance: str) -> bool:
+        """Heartbeat yangilash; ``False`` — qulfni boshqa nusxa olib qo'ydi."""
+        value = await self._fetchval(
+            """
+            UPDATE instance_lock SET heartbeat_at = $1
+            WHERE id = 'bot' AND instance = $2
+            RETURNING 1
+            """,
+            _now(),
+            instance,
+        )
+        return bool(value)
+
+    async def release_instance_lock(self, instance: str) -> None:
+        await self._execute(
+            "DELETE FROM instance_lock WHERE id = 'bot' AND instance = $1",
+            instance,
+        )
 
     # ======================================================================
     # EVENTS (captured activity)

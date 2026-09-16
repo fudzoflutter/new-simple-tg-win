@@ -33,7 +33,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime
 from typing import Optional
 
 from aiogram import Bot
@@ -50,8 +49,9 @@ from app.database import db
 from app.services import access
 
 
-# Eganing o'z xabari yoki admin o'chirgan xabarlar hisobotlanmaydi
-from app.utils.formatting import esc, fmt_time, mention_by_id
+# Hisobotlardagi vaqtlar: Toshkent (UTC+5) vaqtida, server soatiga
+# bog'liq bo'lmagan holda (app/utils/timeutils.py — bitta joyda sozlanadi).
+from app.utils.formatting import esc, mention_by_id
 from app.utils.texts import (
     NO_TEXT,
     REPORT_DELETED_MEDIA,
@@ -59,10 +59,12 @@ from app.utils.texts import (
     REPORT_DELETED_TEXT,
     REPORT_EDIT,
     REPORT_FOOTER,
+    REPORT_FOOTER_DELETED,
     TRUNCATED,
     UNKNOWN_CHAT,
     WHO_UNKNOWN,
 )
+from app.utils.timeutils import hms, now_report
 
 logger = logging.getLogger(__name__)
 
@@ -280,6 +282,17 @@ class Reporter:
         * media bo'lsa  -> keshlangan fayl QAYTA YUBORILADI;
         * eganing o'z xabari yoki keshda yo'q id — JIM o'tkazib yuboriladi.
         """
+        # O'CHIRILISH VAQTI — BITTA MARTA, update kelgan ZAHOTI olinadi.
+        #
+        # Telegram "deleted_business_messages" yangilamasini darhol yuboradi
+        # va unda vaqt maydoni YO'Q (business_connection_id, chat, message_ids
+        # — tamom).  Shuning uchun eng aniq manba — shu update qabul qilingan
+        # payt.  Uni quyidagi DB so'rovlaridan OLDIN o'lchaymiz (ular Supabase
+        # bilan ~1-3 sekund olishi mumkin) va butun hisobot uchun ishlatamiz:
+        # sarlavha, media izohi va "Chat/Vaqt" qatori — hammasi AYNAN bir
+        # vaqtni ko'rsatadi (sekin fayl yuklash ham uni surib ketmaydi).
+        deleted_hms = hms(now_report())
+
         owner_id = await self._activate(deleted.business_connection_id)
         if owner_id is None:
             return
@@ -312,7 +325,8 @@ class Reporter:
                     who=who, original=self._clip(self._plain_content(details))
                 )
                 await self._send(
-                    self._owner_chat, body + self._footer(chat_title)
+                    self._owner_chat,
+                    body + self._footer(chat_title, deleted_at=deleted_hms),
                 )
             elif event_type in MEDIA_EVENTS:
                 # 2) MEDIA: keshlangan faylni QAYTA YUBORAMIZ.
@@ -326,11 +340,13 @@ class Reporter:
                         ),
                         chat_title=chat_title,
                         caption=self._media_caption(details),
+                        deleted_at=deleted_hms,
                     )
                 if not sent_ok:
                     body = REPORT_DELETED_MEDIA.format(kind=label, who=who, mid=mid)
                     await self._send(
-                        self._owner_chat, body + self._footer(chat_title)
+                        self._owner_chat,
+                        body + self._footer(chat_title, deleted_at=deleted_hms),
                     )
             else:
                 continue
@@ -520,8 +536,16 @@ class Reporter:
 
     # -- yuborish ------------------------------------------------------------
 
-    def _footer(self, chat_title: str) -> str:
-        return REPORT_FOOTER.format(chat=chat_title, time=self._now_hms())
+    def _footer(self, chat_title: str, *, deleted_at: Optional[str] = None) -> str:
+        """Hisobot oxiridagi "Chat + Vaqt" qatori.
+
+        ``deleted_at`` berilgan bo'lsa — qator O'CHIRILGAN vaqtni ko'rsatadi
+        (o'chirish hisoboti uchun).  Aks holda hozirgi vaqt (tahrirlash
+        hisoboti).  Ikkalasi ham Toshkent (UTC+5) vaqtida.
+        """
+        if deleted_at is not None:
+            return REPORT_FOOTER_DELETED.format(chat=chat_title, time=deleted_at)
+        return REPORT_FOOTER.format(chat=chat_title, time=hms(now_report()))
 
     async def _resend_media(
         self,
@@ -532,18 +556,21 @@ class Reporter:
         header: str,
         chat_title: str,
         caption: Optional[str] = None,
+        deleted_at: Optional[str] = None,
     ) -> bool:
         """Saqlangan media faylni qayta yuborish (o'chirilganda).
 
-        header — sarlavha ("🗑 Photo deleted" + Kim).  Muvaffaqiyatsiz bo'lsa
-        False qaytaradi — chaqiruvchi matnli zaxira variant yuboradi.
+        header — sarlavha ("🗑 Photo deleted" + Kim).  ``deleted_at`` —
+        o'chirilish vaqti (``HH:MM:SS``, Toshkent); u izoh oxiridagi
+        "Chat/Vaqt" qatoriga qo'yiladi.  Muvaffaqiyatsiz bo'lsa False
+        qaytaradi — chaqiruvchi matnli zaxira variant yuboradi.
         """
         if chat_id is None:
             return False
         cap = self._apply_gap(header)
         if caption:
             cap += f"\n💬 Caption: {self._clip(caption)}"
-        cap += self._footer(chat_title)
+        cap += self._footer(chat_title, deleted_at=deleted_at)
 
         try:
             if event_type == EVENT_STICKER:
@@ -652,7 +679,3 @@ class Reporter:
         if len(text) <= MAX_TEXT:
             return text
         return text[:MAX_TEXT] + TRUNCATED
-
-    @staticmethod
-    def _now_hms() -> str:
-        return fmt_time(datetime.now())

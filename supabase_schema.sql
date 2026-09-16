@@ -13,7 +13,9 @@
 -- Fayl idempotent: bir necha marta ishga tushirilsa, hech narsani
 -- buzmaydi (mavjud jadvallar/indexlar qayta yaratilmaydi).
 --
--- DIQQAT: bot faqat 3 jadval bilan ishlaydi — users, events, connections.
+-- DIQQAT: bot 5 jadval bilan ishlaydi — users, events, connections,
+-- access (kim foydalana oladi) va instance_lock (qaysi nusxa polling
+-- qilmoqda — ikki nusxa update'larni bo'lib ketmasligi uchun).
 -- Premium / obuna / to'lov / admin-panel jadvallari (plans, payments,
 -- bot_settings) OLIB TASHLANGAN.  Bu DDL mavjud jadvallarni O'CHIRMAYDI;
 -- eski plans/payments jadvallari qolaversa hech narsaga zarari yo'q.
@@ -48,6 +50,26 @@ CREATE TABLE IF NOT EXISTS connections (
     is_enabled             BOOLEAN NOT NULL DEFAULT TRUE,
     connected_at           TEXT,
     disconnected_at        TEXT
+);
+
+CREATE TABLE IF NOT EXISTS access (
+    user_id     BIGINT PRIMARY KEY,
+    status      TEXT NOT NULL,
+    username    TEXT,
+    first_name  TEXT,
+    decided_by  BIGINT,
+    created_at  TEXT NOT NULL,
+    decided_at  TEXT
+);
+
+-- Bir vaqtda faqat BITTA nusxa polling qilishi uchun qulf (heartbeat).
+CREATE TABLE IF NOT EXISTS instance_lock (
+    id           TEXT PRIMARY KEY,
+    instance     TEXT NOT NULL,
+    host         TEXT,
+    pid          BIGINT,
+    started_at   TEXT NOT NULL,
+    heartbeat_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_time         ON events (occurred_at);

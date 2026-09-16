@@ -180,7 +180,15 @@ REPORT_DELETED_MEDIA_CAPTION = (
     f"{E_USER} Kim: {{who}}"
 )
 
+# Hisobot oxiridagi qatorlar.
+#   REPORT_FOOTER         — tahrirlash hisoboti uchun (vaqt = tahrirlangan payt)
+#   REPORT_FOOTER_DELETED — o'chirish hisoboti uchun (vaqt = O'CHIRILGAN payt)
+# Ikkala vaqt ham Toshkent (UTC+5) mintaqasida ko'rsatiladi — hisob
+# app/utils/timeutils.py da (REPORT_UTC_OFFSET_HOURS).
 REPORT_FOOTER = f"\n{E_CHAT} Chat: <b>{{chat}}</b>\n{E_CLOCK} Vaqt: <b>{{time}}</b>"
+REPORT_FOOTER_DELETED = (
+    f"\n{E_CHAT} Chat: <b>{{chat}}</b>\n{E_CLOCK} O'chirilgan: <b>{{time}}</b>"
+)
 
 # Matn bo'sh yoki juda uzun bo'lganda.
 NO_TEXT = "<i>(matn yo'q)</i>"
@@ -275,3 +283,26 @@ USERS_PANEL_LEGEND = (
 USERS_PANEL_EMPTY = "<i>Hozircha foydalanuvchilar yo'q.</i>"
 USERS_PANEL_LINE = "{badge} {mention} — <code>{user_id}</code>"
 USERS_PANEL_PAGE = "Sahifa {page}/{pages}"
+
+# ---------------------------------------------------------------------------
+# IKKI NUSXA (409 Conflict) — faqat adminga (app/services/duplicate_watch.py)
+#
+# Aiogram 409 xatosini o'zi yutib qo'yadi, shu sababli bot "ishlayapti"
+# ko'rinadi-yu, update'larning bir qismini boshqa nusxa olib ketadi.
+# ---------------------------------------------------------------------------
+DUPLICATE_POLLER = (
+    "⚠️ <b>DIQQAT: botni IKKI nusxa poll qilmoqda</b>\n\n"
+    "Telegram bitta token uchun faqat BITTA nusxaga xabar beradi, shuning "
+    "uchun ikkinchi nusxa bilan navbatma-navbat to'qnashyapmiz "
+    "(<code>409 Conflict</code>). Natijada update'lar ikki nusxa orasida "
+    "bo'linib ketadi: bot ba'zi xabarlarni ko'radi, ba'zilarini ko'rmaydi "
+    "va ba'zi hisobotlar umuman kelmaydi.\n\n"
+    "Nima qilish kerak:\n"
+    "1. Boshqa kompyuter / terminal / VS Code oynasidagi "
+    "<code>python run.py</code> ni to'xtating.\n"
+    "2. Serverga (Railway / Render / VPS) deploy qilingan nusxa bo'lsa — "
+    "uni ham to'xtating yoki eng oxirgi kod bilan yangilang.\n"
+    "3. Botni faqat BITTA joyda ishga tushiring.\n\n"
+    "Aniqlangan <code>409</code> xatolari: <b>{count}</b>\n"
+    "<i>Bu ogohlantirish 30 daqiqada bir martadan ko'p kelmaydi.</i>"
+)

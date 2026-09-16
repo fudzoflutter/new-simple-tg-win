@@ -20,16 +20,26 @@ It plugs a FakeBot + FakeDB into Reporter and checks the STRICT rules:
 10. Who shows @username when available, name/mention otherwise
 11. connection lookup is cached (1 DB read) and invalidated on a
     business_connection change
+12. HAQIQIY aiogram yangiliklari (business_message JSON) — ovozli xabar va
+    dumaloq video jim keshlanadi va o'chirilganda AYNAN o'sha file_id bilan
+    qayta yuboriladi (foydalanuvchi shikoyati: "ovozli xabar va dumaloq
+    video saqlanmayapti / qayta yuborilmayapti").
+13. O'CHIRILISH VAQTI — hisobotlarda Toshkent (UTC+5) vaqtida ko'rsatiladi
+    (server UTC bo'lsa ham 5 soatga surilmaydi), bir update uchun BIR MARTA
+    olinadi va sekin DB/fayl yuklash uni o'zgartirib yubormaydi.
 """
 
 from __future__ import annotations
 
 import asyncio
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from aiogram.types import Update  # noqa: E402
 
 from app.services import reporter as rep  # noqa: E402
 from app.services.reporter import Reporter, invalidate_connection  # noqa: E402
@@ -99,28 +109,40 @@ class FakeBot:
 
     def __init__(self) -> None:
         self.sent: list[tuple[str, str]] = []  # (method, caption/text)
+        # Qayta yuborilgan fayllar: (method, file_id) — fayl AYNAN o'sha
+        # keshlangan file_id bilan ketganini isbotlash uchun.
+        self.files: list[tuple[str, str]] = []
+        self.fail_media = False  # True -> media yuborish xato beradi (fallback)
 
     async def send_message(self, chat_id: int, text: str, **kw: Any) -> None:
         self.sent.append(("message", text))
 
     async def send_photo(self, chat_id: int, photo: str, caption: str = "", **kw: Any) -> None:
+        if self.fail_media:
+            raise RuntimeError("media yuborilmadi (test)")
         self.sent.append(("photo", caption))
+        self.files.append(("photo", photo))
 
     async def send_video(self, chat_id: int, video: str, caption: str = "", **kw: Any) -> None:
         self.sent.append(("video", caption))
+        self.files.append(("video", video))
 
     async def send_animation(self, chat_id: int, animation: str, caption: str = "", **kw: Any) -> None:
         self.sent.append(("animation", caption))
+        self.files.append(("animation", animation))
 
     async def send_sticker(self, chat_id: int, sticker: str, **kw: Any) -> None:
         self.sent.append(("sticker", ""))
+        self.files.append(("sticker", sticker))
 
     async def send_voice(self, chat_id: int, voice: str, caption: str = "", **kw: Any) -> None:
         self.sent.append(("voice", caption))
+        self.files.append(("voice", voice))
 
     async def send_video_note(self, chat_id: int, video_note: str, **kw: Any) -> None:
         # Dumaloq videoga caption yozib bo'lmaydi — izoh alohida xabar bo'ladi.
         self.sent.append(("video_note", ""))
+        self.files.append(("video_note", video_note))
 
 
 class FakeDB:
@@ -361,6 +383,186 @@ async def run_all() -> None:
     )
     row = await gdb.get_event_by_message(CHAT_ID, 92)
     assert row and row["details"] == "back on", "re-enabled connection caches again"
+
+    # Scenario H: HAQIQIY aiogram yangiliklari (JSON -> Update -> Message).
+    # Bu qism aynan foydalanuvchi shikoyatini tekshiradi: "ovozli xabar va
+    # dumaloq video saqlanmayapti va qayta yuborilmayapti".  Yo'q — ikkalasi
+    # ham jim keshlanadi, o'chirilganda esa fayl AYNAN o'sha file_id bilan
+    # qayta yuboriladi.
+    def media_update(mid: int, kind: str, fid: str) -> dict:
+        media = {"file_id": fid, "file_unique_id": f"u{mid}", "duration": 5,
+                 "file_size": 1000}
+        if kind == "video_note":
+            media["length"] = 240
+        return {
+            "update_id": mid,
+            "business_message": {
+                "message_id": mid,
+                "date": 1_760_000_000,
+                "business_connection_id": "conn-1",
+                "chat": {"id": CHAT_ID, "type": "private",
+                         "first_name": "Partner", "username": "juratbek"},
+                "from": {"id": PARTNER_ID, "is_bot": False,
+                         "first_name": "Juratbek", "username": "juratbek"},
+                kind: media,
+            },
+        }
+
+    def delete_update(mid: int) -> dict:
+        return {
+            "update_id": 9000 + mid,
+            "deleted_business_messages": {
+                "business_connection_id": "conn-1",
+                "chat": {"id": CHAT_ID, "type": "private",
+                         "first_name": "Partner", "username": "juratbek"},
+                "message_ids": [mid],
+            },
+        }
+
+    hdb = FakeDB()
+    rep.db = hdb  # type: ignore[assignment]
+    invalidate_connection()
+    rh = Reporter(FakeBot())
+
+    for mid, kind, fid in ((501, "voice", "VOICE_FILE_ID"),
+                           (502, "video_note", "NOTE_FILE_ID")):
+        rh.bot.sent.clear()
+        rh.bot.files.clear()
+
+        incoming = Update.model_validate(media_update(mid, kind, fid)).business_message
+        assert incoming is not None and getattr(incoming, kind) is not None, kind
+        await rh.report_incoming(incoming)
+        assert rh.bot.sent == [], f"{kind}: yuborish hisobot qilinmasligi kerak"
+
+        row = await hdb.get_event_by_message(CHAT_ID, mid)
+        assert row and row["event_type"] == kind, (kind, row)
+        assert fid in row["details"], (kind, row)
+
+        deleted = Update.model_validate(delete_update(mid)).deleted_business_messages
+        assert deleted is not None
+        await rh.report_deleted(deleted)
+        assert [m for m, _ in rh.bot.files] == [kind], (kind, rh.bot.files)
+        assert rh.bot.files[0][1] == fid, (
+            f"{kind}: keshlangan file_id qayta yuborilishi kerak"
+        )
+        assert rh.bot.sent, f"{kind}: sarlavha (izoh) yuborilishi kerak"
+        assert "o'chirildi" in " ".join(t for _, t in rh.bot.sent)
+
+    # Voice izohi (caption) ham saqlanadi va qayta yuboriladi.
+    rh.bot.sent.clear()
+    rh.bot.files.clear()
+    with_caption = media_update(503, "voice", "VOICE_FID_2")
+    with_caption["business_message"]["caption"] = "eslab qol"
+    await rh.report_incoming(
+        Update.model_validate(with_caption).business_message
+    )
+    await rh.report_deleted(
+        Update.model_validate(delete_update(503)).deleted_business_messages
+    )
+    assert rh.bot.files == [("voice", "VOICE_FID_2")], rh.bot.files
+    assert "eslab qol" in rh.bot.sent[0][1], rh.bot.sent
+
+    # Scenario I: O'CHIRILISH VAQTI — aniq va Toshkent (UTC+5) vaqtida.
+    #
+    # Foydalanuvchi shikoyati: "bot o'chirilgan media uchun noto'g'ri vaqt
+    # ko'rsatyapti".  Sabab: vaqt `datetime.now()` (mashina/server soati)
+    # bilan olinardi — Docker/Railway konteynerida bu UTC, ya'ni Toshkentdan
+    # 5 soat ORQADA.  Endi vaqt Toshkent mintaqasida va update kelgan ZAHOTI
+    # (DB so'rovlaridan oldin) bir marta olinadi.
+    idb = FakeDB()
+    rep.db = idb  # type: ignore[assignment]
+    invalidate_connection()
+    ri = Reporter(FakeBot())
+
+    real_now = rep.now_report
+    # "Soat" har chaqiriqda boshqa vaqt qaytaradi: hisobot BIRINCHI (eng
+    # erta) qiymatni ishlatishi kerak, kechroq olinganini emas.
+    stamps = [
+        datetime(2026, 9, 16, 12, 34, 56, tzinfo=timezone.utc),  # -> 17:34:56
+        datetime(2026, 9, 16, 15, 0, 0, tzinfo=timezone.utc),   # -> 20:00:00
+        datetime(2026, 9, 16, 18, 0, 0, tzinfo=timezone.utc),   # -> 23:00:00
+    ]
+    clock = {"calls": 0}
+
+    def fake_now() -> datetime:
+        value = stamps[min(clock["calls"], len(stamps) - 1)]
+        clock["calls"] += 1
+        return value
+
+    rep.now_report = fake_now  # type: ignore[assignment]
+    try:
+        # (a) MATN o'chirilishi
+        clock["calls"] = 0
+        await ri.report_incoming(FakeMessage(601, PARTNER_ID, text="o'chiriladi"))
+        await ri.report_deleted(SimpleDeleted([601]))
+        text_report = [t for k, t in ri.bot.sent if k == "message"][0]
+        assert "🕒 O'chirilgan: <b>17:34:56</b>" in text_report, text_report
+        assert clock["calls"] == 1, (
+            f"vaqt bir marta olinishi kerak, {clock['calls']} marta olingan"
+        )
+
+        # (b) MEDIA o'chirilishi (izohdagi vaqt ham AYNI)
+        ri.bot.sent.clear()
+        clock["calls"] = 0
+        await ri.report_incoming(
+            FakeMessage(602, PARTNER_ID, media={"voice": SimplePhoto("V1")})
+        )
+        await ri.report_deleted(SimpleDeleted([602]))
+        caption = ri.bot.sent[0][1]
+        assert "🕒 O'chirilgan: <b>17:34:56</b>" in caption, caption
+        assert "20:00:00" not in caption and "23:00:00" not in caption, caption
+        assert clock["calls"] == 1, clock["calls"]
+
+        # (c) Media qayta yuborilmasa — matnli zaxira hisobot ham SHU vaqtni
+        #     ko'rsatadi (fallback yo'lida ham vaqt yo'qolmaydi).
+        fallback_bot = FakeBot()
+        fallback_bot.fail_media = True
+        rf = Reporter(fallback_bot)
+        clock["calls"] = 0
+        await rf.report_incoming(
+            FakeMessage(603, PARTNER_ID, media={"photo": [SimplePhoto("P1")]})
+        )
+        await rf.report_deleted(SimpleDeleted([603]))
+        body = [t for k, t in rf.bot.sent if k == "message"][0]
+        assert "🕒 O'chirilgan: <b>17:34:56</b>" in body, body
+
+        # (d) Bir yangilamada bir nechta xabar — hammasi AYNI vaqtni ko'rsatadi.
+        ri.bot.sent.clear()
+        clock["calls"] = 0
+        await ri.report_incoming(FakeMessage(604, PARTNER_ID, text="bir"))
+        await ri.report_incoming(FakeMessage(605, PARTNER_ID, text="ikki"))
+        await ri.report_deleted(SimpleDeleted([604, 605]))
+        times = [t for k, t in ri.bot.sent if k == "message"]
+        assert len(times) == 2, times
+        assert all("🕒 O'chirilgan: <b>17:34:56</b>" in t for t in times), times
+        assert clock["calls"] == 1, clock["calls"]
+
+        # (e) TAHRIRLASH hisoboti ham shu mintaqada (UTC+5).
+        ri.bot.sent.clear()
+        clock["calls"] = 0
+        await ri.report_incoming(FakeMessage(606, PARTNER_ID, text="eski"))
+        await ri.report_edited(FakeMessage(606, PARTNER_ID, text="yangi"))
+        edit = [t for k, t in ri.bot.sent if k == "message"][0]
+        assert "🕒 Vaqt: <b>17:34:56</b>" in edit, edit
+    finally:
+        rep.now_report = real_now  # type: ignore[assignment]
+
+    # (f) Mashina soat mintaqasidan MUSTAQIL: UTC + 5 soat (Toshkentda DST yo'q).
+    from app.utils.timeutils import REPORT_UTC_OFFSET_HOURS, TZ_REPORT, hms
+
+    assert REPORT_UTC_OFFSET_HOURS == 5, REPORT_UTC_OFFSET_HOURS
+    assert str(TZ_REPORT) == "UTC+05:00", TZ_REPORT
+    assert hms(datetime(2026, 9, 16, 12, 34, 56)) == "17:34:56", "naive = UTC"
+    assert hms(datetime(2026, 9, 16, 7, 4, 56, tzinfo=timezone.utc)) == "12:04:56"
+    # Devor soati (wall clock) farqi: UTC + 5.  Diqqat: ikkala vaqt bir xil
+    # oniy paytni bildiradi (astimezone), shuning uchun tzinfo'siz qiymatlar
+    # taqqoslanadi.
+    uz_clock = rep.now_report().replace(tzinfo=None)
+    utc_clock = datetime.now(timezone.utc).replace(tzinfo=None)
+    delta = (uz_clock - utc_clock).total_seconds()
+    assert abs(delta - 5 * 3600) < 5, delta
+
+    print("Scenario I (o'chirilish vaqti — Toshkent UTC+5, bir marta) OK ✅")
 
     print("REPORTER RULES TEST PASSED ✅  "
           "(silent sends, edit/delete-only reports, partner-only, usernames, "

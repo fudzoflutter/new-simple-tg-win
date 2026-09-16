@@ -114,6 +114,8 @@ app/
 ├── services/
 │   ├── access.py       # in-memory access cache (sync check, no I/O hot path)
 │   ├── reporter.py     # builds the owner report messages
+│   ├── instance_lock.py# DB lock: only ONE copy may poll Telegram at a time
+│   ├── duplicate_watch.py # turns silent 409 conflicts into an owner alert
 │   ├── linkcleaner.py  # strips tracking params from links
 │   └── watchdog.py     # daily DB housekeeping
 └── utils/
@@ -123,9 +125,10 @@ app/
     └── ui.py           # colored button factory
 ```
 
-The bot only uses **four tables**: `users`, `events` (the message cache that
-lets deleted content be re-sent), `connections` and `access` (who may use the
-bot — read into memory once at startup).
+The bot only uses **five tables**: `users`, `events` (the message cache that
+lets deleted content be re-sent), `connections`, `access` (who may use the bot
+— read into memory once at startup) and `instance_lock` (which copy of the bot
+is polling Telegram right now).
 
 ---
 
@@ -138,9 +141,11 @@ bot — read into memory once at startup).
 | Button colors | `style=` args in `app/keyboards/*.py` (`danger`/`success`/`primary`) |
 | "Online" window | `ONLINE_WINDOW_SECONDS` / `window_seconds` in `app/handlers/user.py` |
 | Who may use the bot (approval vs open) | `TEST_MODE` in `env.txt` / `.env` (`1` = approve each new user, `0` = open, banning still works) |
+| Running two copies at once / 409 errors | `FORCE_POLL=1` in `env.txt` (disables the single-instance lock — see below) |
 | Access texts (request / deny / ban) | the `ACCESS_*` block at the end of `app/utils/texts.py` |
 | Access rules (statuses, caching) | `app/services/access.py` |
 | Link cleaning rules | `TRACKING_EXACT` / `TRACKING_PREFIXES` in `app/services/linkcleaner.py` |
+| Report times (timezone) | `REPORT_UTC_OFFSET_HOURS` in `app/utils/timeutils.py` (default `5` = Tashkent; report times never follow the server clock, so a UTC container still shows local time) |
 | Report text limits | `MAX_TEXT` in `app/services/reporter.py` |
 | Report rules (what gets reported) | `report_incoming` / `report_edited` / `report_deleted` in `app/services/reporter.py` |
 
@@ -171,6 +176,31 @@ bot — read into memory once at startup).
   berish / ❌ Rad etish**) and remembers the answer. The card is sent **once**
   per user, so a spammer cannot flood the owner's chat. With `TEST_MODE=0`
   everyone is welcome and banning still works.
+
+### ⚠️ Only ONE copy may run at a time (409)
+
+Telegram delivers updates of one bot token to **one** `getUpdates` connection
+at a time. If a second copy is polling (an old terminal window, VS Code, or a
+server deployment of the same token), the two copies **take turns**: aiogram
+hides the `409 Conflict` inside its retry loop, so the bot *looks* healthy
+while a random share of the updates goes to the other copy. The visible symptom
+is exactly *"the bot sees some messages and not others"* — and, if that other
+copy runs older code, the newest content types (voice / circular video) are
+silently skipped there.
+
+Two layers now prevent that:
+
+* **Single-instance lock** (`app/services/instance_lock.py`) — every copy
+  writes a heartbeat into `instance_lock`; if another copy is alive (heartbeat
+  younger than 60 s), the new copy does **not** start polling and prints the
+  other copy's host / PID / start time with clear instructions. A hard-killed
+  process frees the lock by itself once its heartbeat goes stale. `FORCE_POLL=1`
+  disables the check.
+* **409 watcher** (`app/services/duplicate_watch.py`) — a copy running *older*
+  code cannot see the lock, so `aiogram.dispatcher` is monitored instead: three
+  `409` errors within a minute send the owner a Telegram alert (at most once
+  per 10 minutes) telling exactly where to look. A silent, half-working bot is
+  no longer possible.
 
 ### Performance
 
