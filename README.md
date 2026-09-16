@@ -7,9 +7,10 @@ forwarded; photos / videos / GIFs / stickers / voice messages / circular
 videos are re-sent only when deleted).
 
 The bot is intentionally **lean**: it also **cleans links** (strips tracking
-parameters) for anyone and shows **how many people use the bot**. There is
-**no admin panel, no premium, no subscriptions** — those features were
-removed to keep the runtime simple.
+parameters) for anyone and shows **how many people use the bot**. The owner
+keeps control through two inline-button screens — **allow / deny** approval
+requests and **ban / unban** — while premium and subscriptions stay out of
+the codebase.
 
 ---
 
@@ -23,10 +24,11 @@ removed to keep the runtime simple.
 | 4 | Reports only for activity that matters: partner message **edits** (old → new) and **deletions** — cached media (photos, videos, GIFs, stickers, **voice messages, circular videos**) is re-sent when deleted. Sent messages are cached silently, never forwarded; the owner's own actions are never reported |
 | 5 | **Link cleaner** — send any link and get it back without tracking params (`utm_*`, `fbclid`, `gclid`, …). Works for everyone, no admin panel |
 | 6 | **User count** — anyone can see how many people use the bot (+ how many were active in the last 2 minutes) |
+| 7 | **Access control** — a stranger who writes to the bot triggers an approval card in the owner's chat (**✅ Ruxsat berish / ❌ Rad etish**); the *Foydalanuvchilar* screen lists every user with a 🚫 **Ban** / ✅ **Unban** button. The decision applies instantly — the check is a pure in-memory lookup, adding **no** database round-trip to any update |
 
 Extras: colored inline buttons (`style=` — Bot API 9.4+), premium emoji icons
-(`icon_custom_emoji_id`), anti-flood, Supabase storage with a local SQLite
-fallback.
+(`icon_custom_emoji_id`), anti-flood, a synchronous access cache (no I/O on
+the hot path), Supabase storage with a local SQLite fallback.
 
 ---
 
@@ -97,11 +99,14 @@ app/
 ├── main.py             # wiring: bot, dispatcher, routers, middleware
 ├── middlewares.py      # registration + activity + anti-flood
 ├── handlers/
-│   ├── user.py         # /start menu, statistics, user count, connect, links
+│   ├── user.py         # /start menu, statistics, connect, link cleaning
+│   ├── admin.py        # allow / deny / ban / unban screens (owner only)
 │   └── business.py     # connection notices + activity capture
 ├── keyboards/
-│   └── user_kb.py      # user keyboards + callback constants
+│   ├── user_kb.py      # user keyboards + callback constants
+│   └── access_kb.py    # approval card + ban/unban panel buttons
 ├── services/
+│   ├── access.py       # in-memory access cache (sync check, no I/O hot path)
 │   ├── reporter.py     # builds the owner report messages
 │   ├── linkcleaner.py  # strips tracking params from links
 │   └── watchdog.py     # daily DB housekeeping
@@ -112,8 +117,9 @@ app/
     └── ui.py           # colored button factory
 ```
 
-The bot only uses **three tables**: `users`, `events` (the message cache that
-lets deleted content be re-sent) and `connections`.
+The bot only uses **four tables**: `users`, `events` (the message cache that
+lets deleted content be re-sent), `connections` and `access` (who may use the
+bot — read into memory once at startup).
 
 ---
 
@@ -125,6 +131,9 @@ lets deleted content be re-sent) and `connections`.
 | Premium emoji icons on buttons | `app/emoji_config.py` |
 | Button colors | `style=` args in `app/keyboards/*.py` (`danger`/`success`/`primary`) |
 | "Online" window | `ONLINE_WINDOW_SECONDS` / `window_seconds` in `app/handlers/user.py` |
+| Who may use the bot (approval vs open) | `TEST_MODE` in `env.txt` / `.env` (`1` = approve each new user, `0` = open, banning still works) |
+| Access texts (request / deny / ban) | the `ACCESS_*` block at the end of `app/utils/texts.py` |
+| Access rules (statuses, caching) | `app/services/access.py` |
 | Link cleaning rules | `TRACKING_EXACT` / `TRACKING_PREFIXES` in `app/services/linkcleaner.py` |
 | Report text limits | `MAX_TEXT` in `app/services/reporter.py` |
 | Report rules (what gets reported) | `report_incoming` / `report_edited` / `report_deleted` in `app/services/reporter.py` |
@@ -147,7 +156,15 @@ lets deleted content be re-sent) and `connections`.
   parameters stripped; the cleaned link is returned (only when something was
   actually removed, so plain chat text is ignored).
 * **User count** — the **Foydalanuvchilar** button shows the total number of
-  users and how many were active recently.
+  users and how many were active recently. For the **owner** the same screen
+  becomes a management panel: every user gets a 🚫 **Ban** / ✅ **Unban**
+  button, and messages from a banned or not-yet-approved user never reach a
+  handler (they get ⏳ *please wait* / 🔒 *no access* / 🚫 *banned*).
+* **Access control** — with `TEST_MODE=1` a stranger's first message is not
+  refused flatly: the bot sends the owner an approval card (**✅ Ruxsat
+  berish / ❌ Rad etish**) and remembers the answer. The card is sent **once**
+  per user, so a spammer cannot flood the owner's chat. With `TEST_MODE=0`
+  everyone is welcome and banning still works.
 
 ### Performance
 
@@ -159,3 +176,10 @@ costs a **single** DB write. The cache is dropped whenever Telegram sends a
 even a reconnect takes effect on the very next update; a 5-minute TTL is a
 safety net in case an event is ever missed. Disconnected or unknown
 connections are never cached.
+
+The access check is just as cheap: every user's status lives in an in-memory
+dictionary (`app/services/access.py`) loaded in a single query at startup, so
+deciding whether an update may proceed costs one dictionary lookup — no
+`await`, no query. Rows are touched only when the owner taps a button or a
+new user asks for access (and even then the cache is updated first, so the
+tap never waits for Supabase).

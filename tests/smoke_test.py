@@ -21,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("BOT_TOKEN", "123456:TEST-TOKEN")
 os.environ.setdefault("ADMIN_ID", "111111111")
+os.environ.setdefault("TEST_MODE", "0")  # Test mode off for tests
 # env.txt haqiqiy kalitlarni o'z ichiga oladi — testlar uni o'qimasin.
 os.environ.setdefault("CODEBUFF_SKIP_ENV_FILE", "1")
 
@@ -36,7 +37,6 @@ def part1_offline() -> None:
     labels = [b.text for row in menu.inline_keyboard for b in row]
     assert any("Statistika" in label for label in labels)
     assert any("Foydalanuvchilar" in label for label in labels)
-    assert any("Havola" in label for label in labels)
     # Premium removed: no premium button anywhere in the menu.
     assert not any("Premium" in label for label in labels)
 

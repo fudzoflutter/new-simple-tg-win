@@ -9,8 +9,8 @@ import qiladi (app/database.py dagi Postgres klassiga qarang).
 Metodlar va qaytariladigan ma'lumot shakllari Postgres versiyasi bilan
 AYNAN bir xil — handlerlar farqni sezmaydi.
 
-Bot faqat 3 jadval bilan ishlaydi: ``users``, ``events``, ``connections``.
-Premium/obuna/admin-panel OLIB TASHLANGAN (yangi talab).
+Bot jadvallari: ``users``, ``events``, ``connections`` va ``access``
+(kirish nazorati).  Premium/obuna OLIB TASHLANGAN.
 """
 
 from __future__ import annotations
@@ -63,6 +63,16 @@ CREATE INDEX IF NOT EXISTS idx_events_time   ON events (occurred_at);
 CREATE INDEX IF NOT EXISTS idx_events_type   ON events (event_type);
 CREATE INDEX IF NOT EXISTS idx_events_user   ON events (user_id);
 CREATE INDEX IF NOT EXISTS idx_events_chat_message ON events (chat_id, message_id);
+
+CREATE TABLE IF NOT EXISTS access (
+    user_id     INTEGER PRIMARY KEY,
+    status      TEXT NOT NULL,
+    username    TEXT,
+    first_name  TEXT,
+    decided_by  INTEGER,
+    created_at  TEXT NOT NULL,
+    decided_at  TEXT
+);
 """
 
 
@@ -199,6 +209,43 @@ class SqliteDatabase:
             (threshold,),
         )
         return row["n"] if row else 0
+
+    async def user_stats(self, user_id: int) -> dict:
+        """Statistika ekranining barcha raqamlari — BITTA so'rov
+        (Postgres backenddagisi bilan AYNAN bir xil natija)."""
+        row = await self._fetch_one(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM users)                        AS users_total,
+              (SELECT COUNT(*) FROM events WHERE user_id = ?)     AS events_total,
+              (SELECT COUNT(*) FROM events
+                 WHERE user_id = ? AND event_type = 'edit')       AS edits,
+              (SELECT COUNT(*) FROM events
+                 WHERE user_id = ? AND event_type = 'delete')     AS deletes,
+              (SELECT COUNT(*) FROM events
+                 WHERE user_id = ? AND event_type = 'delete_media') AS deletes_media,
+              (SELECT COUNT(*) FROM connections
+                 WHERE user_id = ? AND is_enabled = 1)            AS active_connections
+            """,
+            (user_id, user_id, user_id, user_id, user_id),
+        )
+        row = row or {}
+        return {
+            "users_total": int(row.get("users_total") or 0),
+            "events_total": int(row.get("events_total") or 0),
+            "edits": int(row.get("edits") or 0),
+            "deletes": int(row.get("deletes") or 0),
+            "deletes_media": int(row.get("deletes_media") or 0),
+            "active_connections": int(row.get("active_connections") or 0),
+        }
+
+    async def has_active_connection(self, user_id: int) -> bool:
+        """/start uchun: faol biznes-ulanish bormi (1 so'rov)."""
+        value = await self._fetchval(
+            "SELECT EXISTS(SELECT 1 FROM connections WHERE user_id = ? AND is_enabled = 1)",
+            (user_id,),
+        )
+        return bool(value)
 
     # ======================================================================
     # EVENTS
@@ -351,4 +398,38 @@ class SqliteDatabase:
         return await self._fetch_all(
             "SELECT * FROM connections WHERE user_id = ? ORDER BY connected_at DESC",
             (user_id,),
+        )
+
+    # ======================================================================
+    # ACCESS (allow / deny / ban) — app/services/access.py keshga yuklaydi
+    # ======================================================================
+
+    async def access_rows(self) -> list[dict]:
+        """Barcha kirish yozuvlari (ishga tushishda bir marta o'qiladi)."""
+        return await self._fetch_all("SELECT * FROM access")
+
+    async def set_access(
+        self,
+        user_id: int,
+        status: str,
+        username: Optional[str] = None,
+        first_name: Optional[str] = None,
+        decided_by: Optional[int] = None,
+    ) -> None:
+        """Yozuvni yaratadi yoki holatini yangilaydi (bitta so'rov)."""
+        now = now_iso()
+        decided_at = now if decided_by else None
+        await self._execute(
+            """
+            INSERT INTO access (user_id, status, username, first_name,
+                                decided_by, created_at, decided_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                status     = excluded.status,
+                username   = COALESCE(excluded.username, access.username),
+                first_name = COALESCE(excluded.first_name, access.first_name),
+                decided_by = excluded.decided_by,
+                decided_at = excluded.decided_at
+            """,
+            (user_id, status, username, first_name, decided_by, now, decided_at),
         )

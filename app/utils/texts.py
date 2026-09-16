@@ -9,7 +9,8 @@ Premium emoji: xabar ICHIDA animatsion (custom) emoji chiqarish uchun
 `tg_e(id, fallback)` ishlatilgan.  Bot akkauntida Premium bo'lmasa, xabar
 oddiy emoji bilan qayta yuboriladi.
 
-Premium / obuna / admin-panel matnlari OLIB TASHLANGAN (yangi talab).
+Premium / obuna matnlari OLIB TASHLANGAN (yangi talab); kirish nazorati
+matnlari (ruxsat so'rash / rad etish / ban) fayl oxirida.
 """
 
 from __future__ import annotations
@@ -214,3 +215,69 @@ UNKNOWN_CHAT = "Noma'lum chat"
 # ---------------------------------------------------------------------------
 UNKNOWN_ACTION = "🤔 Noma'lum amal — quyidagi menyudan foydalaning."
 ERROR_USER = "😔 Xatolik yuz berdi. Keyinroq qayta urinib ko'ring."
+
+# ---------------------------------------------------------------------------
+# Kirish nazorati: ruxsat so'rash / rad etish / ban (app/services/access.py)
+# ---------------------------------------------------------------------------
+# Foydalanuvchi ruxsat so'rab murojaat qilganda.
+ACCESS_PENDING = (
+    "⏳ <b>So'rovingiz yuborildi.</b>\n\n"
+    "Admin tasdiqlashini kuting — ruxsat berilishi bilan shu yerga xabar "
+    "keladi."
+)
+
+# So'rov rad etilganda.
+ACCESS_DENIED = (
+    "🔒 <b>Ruxsat berilmagan.</b>\n\n"
+    "Sizga bu botdan foydalanish uchun ruxsat berilmagan. Xatolik deb "
+    "hisoblasangiz, admin bilan bog'laning."
+)
+
+# Banlanganda.
+ACCESS_BANNED = (
+    "🚫 <b>Siz bloklangansiz.</b>\n\n"
+    "Bu botdan foydalanish huquqingiz to'xtatilgan."
+)
+
+# -- ADMINGA (karta) --------------------------------------------------------
+ACCESS_REQUEST_ADMIN = (
+    "🔔 <b>Yangi ruxsat so'rovi</b>\n\n"
+    "👤 Kim: {who}\n"
+    "🆔 ID: <code>{user_id}</code>\n"
+    "🔗 Username: {username}\n\n"
+    "Quyidagi tugmalar orqali ruxsat bering yoki rad eting."
+)
+
+# Qaror qabul qilingach karta TEPASIGA qo'shiladi (tugmalar olib tashlanadi).
+ACCESS_REQUEST_ALLOWED = "✅ <b>Ruxsat berildi</b>"
+ACCESS_REQUEST_DENIED = "❌ <b>Rad etildi</b>"
+
+# -- FOYDALANUVCHIGA (qaror haqida) -----------------------------------------
+USER_APPROVED = (
+    "✅ <b>Sizga ruxsat berildi!</b>\n\n"
+    "Endi botdan to'liq foydalanishingiz mumkin."
+)
+USER_DENIED = (
+    "❌ <b>So'rovingiz rad etildi.</b>\n\n"
+    "Botdan foydalanishga ruxsat berilmadi."
+)
+USER_BANNED = (
+    "🚫 <b>Siz botdan bloklandingiz.</b>\n\n"
+    "Foydalanish huquqingiz admin tomonidan to'xtatildi."
+)
+USER_UNBANNED = (
+    "✅ <b>Blokingiz olindi.</b>\n\n"
+    "Botdan yana foydalanishingiz mumkin."
+)
+
+# -- ADMIN PANELI: foydalanuvchilar ro'yxati --------------------------------
+USERS_PANEL_TITLE = (
+    "👥 <b>Foydalanuvchilar boshqaruvi</b>\n\n"
+    "Jami: <b>{total}</b> · 🟢 Faol (2 daq): <b>{online}</b>\n\n"
+    "{body}\n\n"
+    "<i>{legend}</i>"
+)
+USERS_PANEL_LEGEND = "✅ ruxsat · ⏳ kutilyapti · 🚫 ban"
+USERS_PANEL_EMPTY = "<i>Hozircha foydalanuvchilar yo'q.</i>"
+USERS_PANEL_LINE = "{badge} {mention} — <code>{user_id}</code>"
+USERS_PANEL_PAGE = "Sahifa {page}/{pages}"

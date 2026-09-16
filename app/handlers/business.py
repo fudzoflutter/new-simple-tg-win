@@ -35,6 +35,7 @@ from aiogram.types import (
 from app.config import settings
 from app.database import db
 from app.keyboards import user_kb
+from app.services import access
 from app.services.reporter import Reporter, invalidate_connection
 from app.utils import texts
 
@@ -77,6 +78,30 @@ async def on_connection(connection: BusinessConnection, bot: Bot) -> None:
     # business-update'lar DBga qayta murojaat qilmasdan TO'G'RI egasini oladi
     # (app/services/reporter.py dagi _connection_cache).
     invalidate_connection(connection.id)
+
+    # 0) KIRISH NAZORATI: ruxsati yo'q foydalanuvchi biznes-ulanish orqali
+    #    ham botdan foydalana olmaydi (hisobot kelmaydi — app/services/access
+    #    + reporter._owner_allowed).  Ulanish BAZADA qoladi: admin ruxsat
+    #    berishi bilan hisobotlar o'sha zahoti boshlanadi.
+    if not access.can_use(user.id):
+        if is_enabled:
+            # Birinchi murojaatda adminga tugmali karta yuboriladi.
+            if await access.request_access(user):
+                await access.notify_admin_request(bot, user)
+            try:
+                await bot.send_message(
+                    connection.user_chat_id or user.id,
+                    access.blocked_notice(user.id),
+                    parse_mode="HTML",
+                )
+            except Exception:  # noqa: BLE001 – bloklagan bo'lishi mumkin
+                logger.info("Ruxsatsiz foydalanuvchiga xabar yuborilmadi: %s", user.id)
+        logger.info(
+            "Business connection %s: owner=%s ruxsatsiz — hisobot o'chirilgan",
+            connection.id,
+            user.id,
+        )
+        return
 
     # 1) Foydalanuvchining o'ziga xabar (3-band).
     #    ULANGANLIK darhol tasdiqlanadi: birinchi ulanish — "amalga oshdi",

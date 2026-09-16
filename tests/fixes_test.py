@@ -27,6 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ["BOT_TOKEN"] = "123456:TEST-TOKEN"
 os.environ["ADMIN_ID"] = "111111111"
+os.environ["TEST_MODE"] = "0"  # Test mode off for tests
 # env.txt real keys must never leak into tests (production Supabase!).
 os.environ["CODEBUFF_SKIP_ENV_FILE"] = "1"
 

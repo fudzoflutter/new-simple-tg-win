@@ -35,6 +35,17 @@ def mention_by_id(user_id: int, name: str, username: Optional[str] = None) -> st
     return f'<a href="tg://user?id={user_id}">{esc(label)}</a>'
 
 
+def strip_html(value: str) -> str:
+    """HTML teglarini olib tashlaydi.
+
+    Callback «alert» (``show_alert=True``) matnini HTML sifatida
+    o'qimaydi — u yerda teglar ko'rinib qolmasligi uchun ishlatiladi.
+    """
+    import re
+
+    return re.sub(r"<[^>]+>", "", value or "")
+
+
 def fmt_time(dt: Optional[datetime]) -> str:
     """Format a datetime as HH:MM:SS (used in report messages)."""
     return dt.strftime("%H:%M:%S") if dt else "--:--:--"

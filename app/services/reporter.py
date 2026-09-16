@@ -47,6 +47,10 @@ from aiogram.types import (
 
 from app.config import settings
 from app.database import db
+from app.services import access
+
+
+# Eganing o'z xabari yoki admin o'chirgan xabarlar hisobotlanmaydi
 from app.utils.formatting import esc, fmt_time, mention_by_id
 from app.utils.texts import (
     NO_TEXT,
@@ -293,8 +297,9 @@ class Reporter:
                 logger.info("Delete skipped: message %s is not cached", mid)
                 continue
             sender_id = stored.get("sender_id")
-            if sender_id and int(sender_id) == owner_id:
-                continue  # eganing o'z xabari — hisobot YO'Q (talab)
+            # Eganing o'z xabari yoki admin o'chirgan istalgan xabar — hisobot YO'Q
+            if sender_id and (int(sender_id) == owner_id or int(sender_id) == settings.admin_id):
+                continue  # hisobot YO'Q (talab)
 
             event_type = stored.get("event_type") or EVENT_TEXT
             details = stored.get("details") or ""
@@ -366,7 +371,7 @@ class Reporter:
         if cached is not None and now - cached[0] < _CONNECTION_TTL_SECONDS:
             self._owner_id = cached[1]
             self._owner_chat = cached[2]
-            return self._owner_id
+            return self._owner_id if self._owner_allowed(self._owner_id) else None
 
         # 2) Keshda yo'q (yoki TTL o'tdi) — DBdan o'qiymiz.
         conn = await db.get_connection(connection_id)
@@ -379,9 +384,24 @@ class Reporter:
         self._owner_id = int(conn["user_id"])
         chat_id = conn.get("user_chat_id") or conn.get("user_id")
         self._owner_chat = int(chat_id) if chat_id else None
+        if not self._owner_allowed(self._owner_id):
+            return None
         # Faqat FAOL ulanish keshlanadi — uzilgani qayta o'qiladi.
         _connection_cache[connection_id] = (now, self._owner_id, self._owner_chat)
         return self._owner_id
+
+    @staticmethod
+    def _owner_allowed(owner_id: Optional[int]) -> bool:
+        """Ega bloklangan bo'lsa hisobot yo'q (ruxsat / ban — access keshida).
+
+        Tekshiruv SOF SINXRON (xotiradagi lug'at), shuning uchun
+        business-update'ga qo'shimcha DB so'rovi qo'shilmaydi.  Bloklangan
+        ulanish KESHLANMAYDI — ban olib tashlanishi bilan darhol tiklanadi.
+        """
+        if owner_id is None or not access.is_blocked(owner_id):
+            return True
+        logger.info("Reporter: ega %s ruxsatsiz — hisobot o'tkazib yuborildi", owner_id)
+        return False
 
     # -- tarkib kesh formati -----------------------------------------------
     # matn :  to'liq matn (escape QILINMAGAN xom holda)

@@ -26,7 +26,8 @@ PART 3 — Live integration (optional, needs SUPABASE_DB_URL): launched as a
          CHILD PROCESS so ``app.config`` snapshots the URL at import time
          exactly like production does.  Verifies the backend auto-selects
          Postgres, the remote schema exists (users / events / connections /
-         supabase_migrations), and the same CRUD matrix passes on Supabase.
+         access / supabase_migrations), and the same CRUD matrix passes on
+         Supabase.
          Test rows are wiped before AND after, so re-runs are safe.
 
 NOTE: the Postgres backend expects the Supabase *pooler* URI (port 6543,
@@ -51,7 +52,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 PASS = "\u2705"
 
 # Bot faqat shu jadvallar bilan ishlaydi (premium/plans/payments OLIB TASHLANGAN).
-CORE_TABLES = ("users", "events", "connections", "supabase_migrations")
+CORE_TABLES = ("users", "events", "connections", "access", "supabase_migrations")
 
 # ---------------------------------------------------------------------------
 # Process setup: keep the throwaway DB + separate the LIVE url.

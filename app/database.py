@@ -16,9 +16,9 @@ Supabase ulanishi (bir marta):
    bot.db ma'lumotlari BIR MARTA import qilinadi (supabase_migrations da
    belgilanadi).
 
-Bot faqat 3 jadval bilan ishlaydi: ``users``, ``events`` (xabarlar keshi —
-o'chirilgan xabarlarni qayta yuborish uchun), ``connections``.
-Premium/obuna/admin-panel OLIB TASHLANGAN (yangi talab).
+Bot jadvallari: ``users``, ``events`` (xabarlar keshi — o'chirilgan
+xabarlarni qayta yuborish uchun), ``connections`` va ``access``
+(kirish nazorati: ruxsat / rad / ban).  Premium/obuna OLIB TASHLANGAN.
 """
 
 from __future__ import annotations
@@ -67,6 +67,16 @@ CREATE TABLE IF NOT EXISTS connections (
     is_enabled             BOOLEAN NOT NULL DEFAULT TRUE,
     connected_at           TEXT,
     disconnected_at        TEXT
+);
+
+CREATE TABLE IF NOT EXISTS access (
+    user_id     BIGINT PRIMARY KEY,
+    status      TEXT NOT NULL,
+    username    TEXT,
+    first_name  TEXT,
+    decided_by  BIGINT,
+    created_at  TEXT NOT NULL,
+    decided_at  TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_time   ON events (occurred_at);
@@ -174,6 +184,14 @@ class Database:
     async def count_online(self, window_seconds: int = 120) -> int:
         return await self._backend.count_online(window_seconds)
 
+    async def user_stats(self, user_id: int) -> dict:
+        """Statistika ekrani uchun BITTA so'rovdagi barcha hisoblar."""
+        return await self._backend.user_stats(user_id)
+
+    async def has_active_connection(self, user_id: int) -> bool:
+        """Foydalanuvchining FAOL biznes-ulanishi bormi?"""
+        return await self._backend.has_active_connection(user_id)
+
     async def add_event(
         self,
         user_id: int,
@@ -235,6 +253,23 @@ class Database:
     async def connections_for_user(self, user_id: int) -> list[dict]:
         return await self._backend.connections_for_user(user_id)
 
+    # -- access control (allow / deny / ban) --------------------------------
+
+    async def access_rows(self) -> list[dict]:
+        return await self._backend.access_rows()
+
+    async def set_access(
+        self,
+        user_id: int,
+        status: str,
+        username: Optional[str] = None,
+        first_name: Optional[str] = None,
+        decided_by: Optional[int] = None,
+    ) -> None:
+        await self._backend.set_access(
+            user_id, status, username, first_name, decided_by
+        )
+
 
 class PostgresDatabase:
     """Supabase Postgres backend (asyncpg)."""
@@ -282,7 +317,12 @@ class PostgresDatabase:
         try:
             self._pool = await asyncpg.create_pool(
                 settings.supabase_db_url,
-                min_size=2,
+                # TEZLIK: Supabase uzoq regionda bo'lsa (masalan Sydney ~1.2 s)
+                # har bir YANGI ulanish ham ~1.2 s oladi.  Shu sababli bir
+                # nechta ulanish oldindan ochiladi — parallel so'rovlar
+                # navbat kutmaydi (min_size=2 da 4 ta parallel so'rov 3.8 s
+                # olardi, hozir ~1.2 s).
+                min_size=5,
                 max_size=10,
                 timeout=30,
                 # Supabase "Connection pooling" URI orqali ulanganda
@@ -413,6 +453,49 @@ class PostgresDatabase:
                 threshold,
             )
         )
+
+    async def user_stats(self, user_id: int) -> dict:
+        """Statistika ekranining barcha raqamlari — BITTA so'rov.
+
+        TEZLIK: Supabase uzoqda bo'lsa har bir so'rov ~1.2 s.  Ekran 7 ta
+        alohida so'rovdan (4 s) bitta so'rovga o'tkazildi (~1.2 s).
+        """
+        row = await self._fetch_one(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM users)                        AS users_total,
+              (SELECT COUNT(*) FROM events WHERE user_id = $1)     AS events_total,
+              (SELECT COUNT(*) FROM events
+                 WHERE user_id = $1 AND event_type = 'edit')       AS edits,
+              (SELECT COUNT(*) FROM events
+                 WHERE user_id = $1 AND event_type = 'delete')     AS deletes,
+              (SELECT COUNT(*) FROM events
+                 WHERE user_id = $1 AND event_type = 'delete_media') AS deletes_media,
+              (SELECT COUNT(*) FROM connections
+                 WHERE user_id = $1 AND is_enabled = TRUE)         AS active_connections
+            """,
+            user_id,
+        )
+        return {
+            "users_total": int((row or {}).get("users_total") or 0),
+            "events_total": int((row or {}).get("events_total") or 0),
+            "edits": int((row or {}).get("edits") or 0),
+            "deletes": int((row or {}).get("deletes") or 0),
+            "deletes_media": int((row or {}).get("deletes_media") or 0),
+            "active_connections": int((row or {}).get("active_connections") or 0),
+        }
+
+    async def has_active_connection(self, user_id: int) -> bool:
+        """/start uchun: faol biznes-ulanish bormi (1 so'rov)."""
+        value = await self._fetchval(
+            """
+            SELECT EXISTS(
+                SELECT 1 FROM connections WHERE user_id = $1 AND is_enabled = TRUE
+            )
+            """,
+            user_id,
+        )
+        return _b(value)
 
     # ======================================================================
     # EVENTS (captured activity)
@@ -582,6 +665,52 @@ class PostgresDatabase:
         return await self._fetch_all(
             "SELECT * FROM connections WHERE user_id = $1 ORDER BY connected_at DESC",
             user_id,
+        )
+
+    # ======================================================================
+    # ACCESS (allow / deny / ban)  – app/services/access.py shu jadvalni
+    # keshga yuklaydi; update'lar keshdan o'qiganligi uchun DBga faqat
+    # admin qaror qilganda murojaat qilinadi.
+    # ======================================================================
+
+    async def access_rows(self) -> list[dict]:
+        """Barcha kirish yozuvlari (ishga tushishda bir marta o'qiladi)."""
+        return await self._fetch_all("SELECT * FROM access")
+
+    async def set_access(
+        self,
+        user_id: int,
+        status: str,
+        username: Optional[str] = None,
+        first_name: Optional[str] = None,
+        decided_by: Optional[int] = None,
+    ) -> None:
+        """Yozuvni yaratadi yoki holatini yangilaydi (bitta so'rov).
+
+        ``decided_by`` faqat admin qarori uchun beriladi — o'sha paytda
+        ``decided_at`` ham yoziladi (so'rovda esa bo'sh qoladi).
+        """
+        now = _now()
+        decided_at = now if decided_by else None
+        await self._execute(
+            """
+            INSERT INTO access (user_id, status, username, first_name,
+                                decided_by, created_at, decided_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (user_id) DO UPDATE SET
+                status     = EXCLUDED.status,
+                username   = COALESCE(EXCLUDED.username, access.username),
+                first_name = COALESCE(EXCLUDED.first_name, access.first_name),
+                decided_by = EXCLUDED.decided_by,
+                decided_at = EXCLUDED.decided_at
+            """,
+            user_id,
+            status,
+            username,
+            first_name,
+            decided_by,
+            now,
+            decided_at,
         )
 
     # ======================================================================

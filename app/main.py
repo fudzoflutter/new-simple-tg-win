@@ -3,9 +3,9 @@ Application entrypoint / wiring.
 
 Reads top-to-bottom to understand how the bot is assembled:
 
-1. config + logging + database
-2. middlewares (registration)
-3. routers (business first, then user)
+1. config + logging + database + access cache
+2. middlewares (access check + registration)
+3. routers (business, admin, then user)
 4. long polling + background watchdog
 """
 
@@ -21,10 +21,12 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from app.config import ensure_configured, settings
 from app.database import db
-from app.handlers import business, user
+from app.handlers import admin, business, user
 from app.middlewares import RegisterUserMiddleware
+from app.services import access
 from app.services.watchdog import run_watchdog
 from app.utils.logger import setup_logging
+from app.utils.tasks import drain
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +122,10 @@ async def main() -> None:
     ensure_configured()
     await db.init()
 
+    # Kirish nazorati keshini BIR MARTA yuklaymiz: shundan keyin har bir
+    # update'dagi ruxsat tekshiruvi xotiradan (dict) o'qiladi — DB so'rovisiz.
+    await access.load()
+
     bot = Bot(
         token=settings.bot_token,
         # HTML everywhere by default – handlers can simply include tags.
@@ -135,7 +141,10 @@ async def main() -> None:
     # 1) business_* updates: connection notices + activity reports.
     dp.include_router(business.router)
 
-    # 2) regular users (menyu, statistika, havola tozalash) go last.
+    # 2) admin panel: ruxsat berish / rad etish / ban / unban (faqat ega).
+    dp.include_router(admin.router)
+
+    # 3) regular users (menyu, statistika, havola tozalash) go last.
     dp.include_router(user.router)
 
     # --- background jobs ------------------------------------------------------
@@ -153,6 +162,9 @@ async def main() -> None:
         await dp.start_polling(bot)
     finally:
         watchdog_task.cancel()
+        # Fonda ketayotgan yozuvlar (masalan ro'yxatga olish) tugasin —
+        # aks holda baza yopilgach ular xato beradi.
+        await drain()
         await db.close()
         await bot.session.close()
         logger.info("Bot stopped.")

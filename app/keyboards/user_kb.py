@@ -20,7 +20,6 @@ from app.utils.ui import BtnStyle, btn, kb
 CB_STATS = "user:stats"
 CB_CONNECT = "user:connect"
 CB_USERS = "user:users"
-CB_CLEAN = "user:clean"
 CB_BACK_MENU = "user:menu"
 
 
@@ -55,18 +54,11 @@ def main_menu(*, connected: bool = False) -> InlineKeyboardMarkup:
                 style=BtnStyle.PRIMARY,
             )
         ],
-        [
-            btn(
-                f"🔗 Havola tozalash",
-                CB_CLEAN,
-                style=BtnStyle.SUCCESS,
-            )
-        ],
     ]
     return kb(rows)
 
 
-def _back_btn():
+def back_btn():
     """«Menyuga qaytish» tugmasi — emoji registrydan."""
     return btn(
         f"{EMOJI.menu_back.fallback} Menyuga qaytish",
@@ -97,10 +89,10 @@ def connect_menu(bot_username: str = "") -> InlineKeyboardMarkup:
     return kb(
         [
             [InlineKeyboardButton(**settings_button)],
-            [_back_btn()],
+            [back_btn()],
         ]
     )
 
 
 def back_to_menu() -> InlineKeyboardMarkup:
-    return kb([[_back_btn()]])
+    return kb([[back_btn()]])

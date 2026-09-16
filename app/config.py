@@ -90,6 +90,13 @@ class Settings:
     # --- Telegram -----------------------------------------------------------
     bot_token: str = field(default_factory=lambda: _env("BOT_TOKEN"))
     admin_id: int = field(default_factory=lambda: _env_int("ADMIN_ID", 0))
+    
+    # --- Test Mode (kirish nazorati) ------------------------------------------
+    # True  -> yangi foydalanuvchi avtomatik kirmaydi: bot adminga
+    #          «✅ Ruxsat berish / ❌ Rad etish» tugmalarini yuboradi.
+    # False -> bot hamma uchun ochiq (ban/unban baribir ishlaydi).
+    # Tafsilot: app/services/access.py
+    test_mode: bool = field(default_factory=lambda: _env("TEST_MODE", "0") == "1")
 
     # --- Storage ------------------------------------------------------------
     db_path: str = field(default_factory=lambda: _env("DB_PATH", "bot.db"))
@@ -130,6 +137,9 @@ class Settings:
         if not self.admin_id:
             missing.append("ADMIN_ID")
         return missing
+
+    # Eslatma: "kim kira oladi" mantiqi app/services/access.py da — u yerda
+    # holatlar keshda saqlanadi (ruxsat / rad / ban), tekshiruv esa sinxron.
 
 
 settings = Settings()
