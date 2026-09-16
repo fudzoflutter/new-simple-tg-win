@@ -31,6 +31,7 @@ from aiogram.types import CallbackQuery
 
 from app.config import settings
 from app.database import db
+from app.emoji_config import EMOJI
 from app.keyboards import access_kb, user_kb
 from app.services import access
 from app.utils import texts
@@ -99,7 +100,12 @@ async def _decide(cb: CallbackQuery, bot: Bot, *, allowed: bool) -> None:
         return
 
     # TEZLIK: javob DARHOL (baza yozuvi ~1.2 s olsa ham tugma kutmaydi).
-    await cb.answer("✅ Ruxsat berildi" if allowed else "❌ Rad etildi")
+    # Alert matnida premium emoji ishlamaydi — oddiy emoji ishlatiladi.
+    await cb.answer(
+        f"{EMOJI.access_allowed.fallback} Ruxsat berildi"
+        if allowed
+        else f"{EMOJI.access_rejected.fallback} Rad etildi"
+    )
 
     await access.set_status(
         user_id,
@@ -172,7 +178,11 @@ async def _toggle_ban(cb: CallbackQuery, bot: Bot, *, ban: bool) -> None:
         await cb.answer("Foydalanuvchi IDsi topilmadi", show_alert=True)
         return
 
-    await cb.answer("🚫 Banlandi" if ban else "✅ Ruxsat berildi")
+    await cb.answer(
+        f"{EMOJI.access_banned.fallback} Banlandi"
+        if ban
+        else f"{EMOJI.access_allowed.fallback} Ruxsat berildi"
+    )
 
     await access.set_status(
         user_id,

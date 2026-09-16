@@ -19,12 +19,12 @@ the codebase.
 | # | Feature |
 |---|---------|
 | 1 | **Connect** button guides the user into *Telegram Settings → Business → Chatbots* |
-| 2 | **Statistics** button + "how it works" explanation |
+| 2 | **Statistics** button — your own numbers only (messages cached, edits, deletions, users), no long explanations |
 | 3 | Instant ✅/❌ notifications to the user when the business connection is established or lost |
 | 4 | Reports only for activity that matters: partner message **edits** (old → new) and **deletions** — cached media (photos, videos, GIFs, stickers, **voice messages, circular videos**) is re-sent when deleted. Sent messages are cached silently, never forwarded; the owner's own actions are never reported |
 | 5 | **Link cleaner** — send any link and get it back without tracking params (`utm_*`, `fbclid`, `gclid`, …). Works for everyone, no admin panel |
 | 6 | **User count** — anyone can see how many people use the bot (+ how many were active in the last 2 minutes) |
-| 7 | **Access control** — a stranger who writes to the bot triggers an approval card in the owner's chat (**✅ Ruxsat berish / ❌ Rad etish**); the *Foydalanuvchilar* screen lists every user with a 🚫 **Ban** / ✅ **Unban** button. The decision applies instantly — the check is a pure in-memory lookup, adding **no** database round-trip to any update |
+| 7 | **Access control** — a stranger who writes to the bot triggers an approval card in the owner's chat (**✅ Ruxsat berish / ❌ Rad etish**); the *Foydalanuvchilar* screen lists everyone with a **🚫 Ban** / **✅ Ruxsat berish** / **✅ Blokdan chiqarish** button (all four icons live in the emoji registry). The decision applies instantly — the check is a pure in-memory lookup, adding **no** database round-trip to any update |
 
 Extras: colored inline buttons (`style=` — Bot API 9.4+), premium emoji icons
 (`icon_custom_emoji_id`), anti-flood, a synchronous access cache (no I/O on
@@ -76,9 +76,15 @@ project your data lives in the cloud (and survives machine reinstalls):
 
 ### Requirements for full functionality
 
-* **Premium emoji on buttons** — the *bot account* must have Telegram
-  Premium or own a Fragment username; otherwise Telegram shows plain text
-  (IDs stay in place and render the day you upgrade).
+* **Premium emoji** — every icon lives in `app/emoji_config.py`.  Button
+  icons (`icon_custom_emoji_id`) are carried as IDs and animate as soon as
+  the *bot account* has Telegram Premium or a Fragment username; until then
+  Telegram shows the plain fallback emoji.
+* **Premium emoji inside message text** needs one extra switch:
+  `ENABLE_PREMIUM_EMOJI_TAGS = True` in `app/emoji_config.py`.  It is off by
+  default because Telegram rejects `<tg-emoji>` from a non-Premium bot
+  (`DOCUMENT_INVALID`), which would stop the whole screen from rendering;
+  with the switch off the same texts render with plain emoji.
 * **Business updates** — the connecting user needs a Telegram Business
   account (free features are enough to add a chatbot).
 * In **@BotFather → /mybots → Bot Settings → Group/Business Privacy** make
@@ -128,7 +134,7 @@ bot — read into memory once at startup).
 | I want to change… | Go to |
 |---|---|
 | Bot texts / wording / language | `app/utils/texts.py` |
-| Premium emoji icons on buttons | `app/emoji_config.py` |
+| Premium emoji icons (menus, reports, **access control**) | `app/emoji_config.py` — single registry, grouped per screen; paste an emoji ID and both the message text and button icons update |
 | Button colors | `style=` args in `app/keyboards/*.py` (`danger`/`success`/`primary`) |
 | "Online" window | `ONLINE_WINDOW_SECONDS` / `window_seconds` in `app/handlers/user.py` |
 | Who may use the bot (approval vs open) | `TEST_MODE` in `env.txt` / `.env` (`1` = approve each new user, `0` = open, banning still works) |

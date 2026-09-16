@@ -37,6 +37,7 @@ from aiogram.types import User as TgUser
 
 from app.config import settings
 from app.database import db
+from app.emoji_config import EMOJI
 
 logger = logging.getLogger(__name__)
 
@@ -111,18 +112,22 @@ def blocked_notice(user_id: int) -> str:
 
 
 def badge(user_id: int) -> str:
-    """Ro'yxat uchun qisqa holat belgisi."""
+    """Ro'yxat uchun qisqa holat belgisi (emoji registrydan)."""
     if is_admin(user_id):
-        return "👑"
+        return EMOJI.access_admin.tag
     current = _statuses.get(user_id)
     if current is None:
-        return "⏳" if settings.test_mode else "✅"
+        return (
+            EMOJI.access_pending.tag if settings.test_mode else EMOJI.access_allowed.tag
+        )
     return {
-        PENDING: "⏳",
-        ALLOWED: "✅",
-        DENIED: "❌",
-        BANNED: "🚫",
-    }.get(current, "❔")
+        PENDING: EMOJI.access_pending.tag,
+        ALLOWED: EMOJI.access_allowed.tag,
+        DENIED: EMOJI.access_rejected.tag,
+        BANNED: EMOJI.access_banned.tag,
+    }.get(current, EMOJI.access_pending.tag)
+
+
 
 
 # ---------------------------------------------------------------------------

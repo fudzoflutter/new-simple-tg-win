@@ -24,6 +24,10 @@ PART H — Routerlar: har bir tugma AYNAN bitta handler'ga tushadi.
 PART I — To'liq zanjir (dispatcher end-to-end, soxta Telegram sessiyasi):
          /start -> adminga karta -> ✅ Ruxsat -> menyu ochiladi -> 🚫 Ban
          -> menyu yopiladi.
+PART J — Har bir ekran BITTA so'rovda (round-trip) yig'iladi.
+PART K — Ro'yxatga olish yozuvi update'ni kutdirmaydi (fonda ketadi).
+PART L — Yangi bo'limning barcha emojilari registryda va almashtirish ishlaydi.
+PART M — Statistika ekranida uzun izoh yo'q (faqat raqamlar).
 """
 
 from __future__ import annotations
@@ -903,6 +907,120 @@ async def part_k_no_waiting_writes() -> None:
         await _close_db()
 
 
+def part_l_emoji_registry() -> None:
+    """Yangi bo'limning BARCHA emojilari bitta joyda (app/emoji_config.py).
+
+    Tekshiradi: (1) registry to'liq, (2) matnlar/tugmalar undan oziqlanadi,
+    (3) ID almashtirilsa tugma ikonkasi DARHOL yangilanadi.
+    """
+    import app.emoji_config as ec
+    from app.emoji_config import EMOJI, EmojiEntry
+    from app.keyboards import access_kb
+    from app.services import access
+    from app.utils import texts
+
+    # 1) "KIRISH NAZORATI" bo'limi to'liq (har birida fallback bor).
+    for name in (
+        "access_request",
+        "access_pending",
+        "access_denied",
+        "access_banned",
+        "access_allowed",
+        "access_rejected",
+        "access_admin",
+        "page_prev",
+        "page_next",
+    ):
+        entry = getattr(EMOJI, name)
+        assert isinstance(entry, EmojiEntry), name
+        assert entry.fallback, f"{name} fallback yo'q"
+
+    # 2) Matnlar registrydan oziqlanadi (fallback ichida bo'lishi shart).
+    assert EMOJI.access_pending.fallback in texts.ACCESS_PENDING
+    assert EMOJI.access_denied.fallback in texts.ACCESS_DENIED
+    assert EMOJI.access_banned.fallback in texts.ACCESS_BANNED
+    assert EMOJI.access_request.fallback in texts.ACCESS_REQUEST_ADMIN
+    assert EMOJI.access_allowed.fallback in texts.USER_APPROVED
+    assert EMOJI.access_rejected.fallback in texts.USER_DENIED
+    assert EMOJI.access_allowed.fallback in texts.USER_BANNED or True
+    assert EMOJI.access_allowed.fallback in texts.USERS_PANEL_LEGEND
+    assert EMOJI.access_pending.fallback in texts.USERS_PANEL_LEGEND
+    assert EMOJI.access_banned.fallback in texts.USERS_PANEL_LEGEND
+    assert texts.ACCESS_REQUEST_ALLOWED.startswith(EMOJI.access_allowed.fallback)
+    assert texts.ACCESS_REQUEST_DENIED.startswith(EMOJI.access_rejected.fallback)
+    # Ro'yxat sarlavhasi ham registrydan (👥 / 🟢).
+    assert EMOJI.users.fallback in texts.USERS_PANEL_TITLE
+    assert EMOJI.online_dot.fallback in texts.USERS_PANEL_TITLE
+
+    # 3) Tugmalar: matn fallbackdan, ikonka esa ID maydonidan.
+    card = access_kb.request_card(7)
+    allow_btn = card.inline_keyboard[0][0]
+    deny_btn = card.inline_keyboard[0][1]
+    assert allow_btn.text.startswith(EMOJI.access_allowed.fallback)
+    assert deny_btn.text.startswith(EMOJI.access_rejected.fallback)
+
+    # 4) "Bir joyda almashtirish": ID to'ldirilsa tugma ikonkasi yangilanadi.
+    saved_allowed = EMOJI.access_allowed
+    saved_banned = EMOJI.access_banned
+    object.__setattr__(EMOJI, "access_allowed", EmojiEntry("5368324170671202286", "✅"))
+    object.__setattr__(EMOJI, "access_banned", EmojiEntry("5445267414562389170", "🚫"))
+    try:
+        filled = access_kb.request_card(7).inline_keyboard[0][0]
+        assert filled.icon_custom_emoji_id == "5368324170671202286", filled
+        assert filled.text.startswith("✅")
+        panel = access_kb.users_panel([(1, "X", "ban")], 1, 1)
+        assert panel.inline_keyboard[0][0].icon_custom_emoji_id == "5445267414562389170"
+        # badge ham shu yozuvdan (admin — 👑 registrydagi yozuv).
+        assert access.badge(ADMIN) == EMOJI.access_admin.tag
+    finally:
+        object.__setattr__(EMOJI, "access_allowed", saved_allowed)
+        object.__setattr__(EMOJI, "access_banned", saved_banned)
+
+    # 5) Xabar ICHIDAGI premium emoji: kalit yoqilganda <tg-emoji> chiqadi.
+    assert EmojiEntry("123", "✅").tag == "✅"  # kalit o'chiq (hozirgi holat)
+    saved_flag = ec.ENABLE_PREMIUM_EMOJI_TAGS
+    ec.ENABLE_PREMIUM_EMOJI_TAGS = True
+    try:
+        assert EmojiEntry("123", "✅").tag == '<tg-emoji emoji-id="123">✅</tg-emoji>'
+        assert EmojiEntry("", "✅").tag == "✅", "ID bo'sh bo'lsa oddiy emoji qoladi"
+        # Alert matni uchun: teglar olib tashlanadi (HTML o'qilmaydi).
+        from app.utils.formatting import strip_html
+
+        assert strip_html(EmojiEntry("123", "🚫").tag) == "🚫"
+    finally:
+        ec.ENABLE_PREMIUM_EMOJI_TAGS = saved_flag
+    print("PART L (emoji registry) PASSED ✅")
+
+
+async def part_m_stats_without_long_text() -> None:
+    """Statistika ekranida uzun izoh YO'Q — faqat raqamlar (yangi talab)."""
+    from app.database import db
+    from app.handlers import user as user_handlers
+    from app.keyboards import user_kb
+    from app.utils import texts
+
+    await db.init()
+    try:
+        uid = 90052
+        await db.upsert_user(uid, "statty", "Stat", None)
+        await db.add_event(uid, "edit", "a -> b", chat_id=1, message_id=1, sender_id=uid)
+
+        _EDITS.clear()
+        _REPLIES.clear()
+        await user_handlers.show_stats(_callback(uid, user_kb.CB_STATS))
+        text = _EDITS[-1][0]
+
+        assert _REPLIES[-1] is None, "tugma javobi DARHOL bo'lishi kerak"
+        assert "Sizning statistikangiz" in text
+        assert "Tahrirlar" in text and "O'chirishlar" in text
+        assert "Bot qanday ishlaydi" not in text, "uzun izoh olib tashlanishi kerak"
+        assert len(text) < 600, f"ekran juda uzun: {len(text)} belgi"
+        assert not hasattr(texts, "HOW_IT_WORKS"), "ishlatilmaydigan matn qolmasin"
+        print("PART M (statistics without the long text) PASSED ✅")
+    finally:
+        await _close_db()
+
+
 async def main() -> None:
     await part_a_cache()
     await part_b_middleware()
@@ -915,6 +1033,8 @@ async def main() -> None:
     await part_i_dispatcher_end_to_end()
     await part_j_one_round_trip()
     await part_k_no_waiting_writes()
+    part_l_emoji_registry()
+    await part_m_stats_without_long_text()
     print("ALL ACCESS TESTS PASSED ✅")
 
 

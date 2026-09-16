@@ -45,7 +45,12 @@ def tg_e(emoji_id: str | None, fallback: str) -> str:
 
 @dataclass(frozen=True)
 class EmojiEntry:
-    """Bitta emoji: premium ID (bo'sh bo'lsa oddiy fallback ko'rinadi)."""
+    """Bitta emoji: premium ID (bo'sh bo'lsa oddiy fallback ko'rinadi).
+
+    ``emoji_id`` ni to'ldirsangiz: xabar ICHIDA ``<tg-emoji>`` ko'rinishida
+    (kalit yoqilgan bo'lsa), tugmalarda esa ``icon_custom_emoji_id`` bo'lib
+    chiqadi — kodni boshqa joyda o'zgartirish shart emas.
+    """
 
     emoji_id: str
     fallback: str
@@ -102,6 +107,32 @@ class EmojiConfig:
     # HOLAT BELGILARI (oddiy emoji — semantik)
     # ------------------------------------------------------------------
     ok: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "✅"))
+
+    # ------------------------------------------------------------------
+    # KIRISH NAZORATI: ruxsat / rad / ban (app/handlers/admin.py,
+    # app/services/access.py, app/keyboards/access_kb.py)
+    #
+    # Bu yerga premium (animatsion) emoji IDlarini yozing — butun bo'lim
+    # (matnlar, tugmalar, ro'yxat belgilari) SHU YERDAN yangilanadi.
+    #
+    #   access_request  🔔  adminga keladigan «Yangi ruxsat so'rovi» kartasi
+    #   access_pending  ⏳  so'rov yuborilgan / tasdiq kutilmoqda
+    #   access_denied   🔒  so'rov rad etilgan (foydalanuvchiga)
+    #   access_banned   🚫  banlangan (matn + «Ban» tugmasi + ro'yxat belgisi)
+    #   access_allowed  ✅  ruxsat berilgan (matn + tugma + ro'yxat belgisi)
+    #   access_rejected ❌  «Rad etish» tugmasi / rad etilgan belgisi
+    #   access_admin    👑  ro'yxatdagi admin belgisi
+    #   page_prev/next  ⬅️ ➡️  ro'yxatni sahifalash
+    # ------------------------------------------------------------------
+    access_request: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "🔔"))
+    access_pending: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "⏳"))
+    access_denied: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "🔒"))
+    access_banned: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "🚫"))
+    access_allowed: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "✅"))
+    access_rejected: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "❌"))
+    access_admin: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "👑"))
+    page_prev: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "⬅️"))
+    page_next: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "➡️"))
 
     # ------------------------------------------------------------------
     # QULAYLIK: qisqa nomlar (texts.py ishlatadigan E_STATS, E_USER, ...)

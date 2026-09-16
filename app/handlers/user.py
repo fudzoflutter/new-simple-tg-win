@@ -90,7 +90,7 @@ async def back_to_menu(cb: CallbackQuery, state: FSMContext) -> None:
 # ---------------------------------------------------------------------------
 @router.callback_query(F.data == user_kb.CB_STATS)
 async def show_stats(cb: CallbackQuery) -> None:
-    """Shaxsiy statistika ekrani.
+    """Shaxsiy statistika ekrani (faqat raqamlar, uzun izohsiz).
 
     TEZLIK: tugma DARHOL javob beradi (spinner to'xtaydi), ekran esa
     BITTA so'rovdan keyin yangilanadi — avval 7 ta alohida so'rov ketardi
@@ -123,8 +123,10 @@ async def show_stats(cb: CallbackQuery) -> None:
         edits=fmt_number(stats["edits"]),
         deletes=fmt_number(stats["deletes"] + stats["deletes_media"]),
     )
+    # Eslatma: ekran oxiridagi uzun "Bot qanday ishlaydi?" matni olib
+    # tashlandi (yangi talab) — faqat raqamlar qoldi.
     await cb.message.edit_text(
-        STATS_TITLE.format(body=body) + "\n\n" + texts.HOW_IT_WORKS,
+        STATS_TITLE.format(body=body),
         reply_markup=user_kb.back_to_menu(),
     )
 

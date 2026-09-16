@@ -23,6 +23,7 @@ from typing import Optional, Sequence
 
 from aiogram.types import InlineKeyboardMarkup
 
+from app.emoji_config import EMOJI
 from app.keyboards.user_kb import back_btn
 from app.utils.ui import BtnStyle, btn, kb
 
@@ -35,15 +36,18 @@ CB_USERS_PAGE = "user:users:p"
 # Tugma matni juda uzun bo'lmasin (Telegram 64 belgi bilan cheklaydi).
 LABEL_MAX = 18
 
-# Amal -> (belgi, so'z).  Bitta tugma holatga qarab ban YOKI ruxsat berish
-# vazifasini bajaradi:
+# Amal -> (registry nomi, tugma so'zi).  Bitta tugma holatga qarab ban
+# YOKI ruxsat berish vazifasini bajaradi:
 #   ban   – ruxsatli odamni bloklash
 #   grant – so'rov kutayotgan / tasdiqlanmagan odamga ruxsat berish
 #   unban – banlangan yoki rad etilgan odamni blokdan chiqarish
+#
+# EMOJI NOMI saqlanadi (obyekt emas): shunda premium ID ni
+# app/emoji_config.py da almashtirsangiz, tugma ikonkasi ham yangilanadi.
 ACTIONS = {
-    "ban": ("🚫", "Ban"),
-    "grant": ("✅", "Ruxsat berish"),
-    "unban": ("✅", "Blokdan chiqarish"),
+    "ban": ("access_banned", "Ban"),
+    "grant": ("access_allowed", "Ruxsat berish"),
+    "unban": ("access_allowed", "Blokdan chiqarish"),
 }
 
 
@@ -62,8 +66,18 @@ def request_card(user_id: int) -> InlineKeyboardMarkup:
     return kb(
         [
             [
-                btn("✅ Ruxsat berish", f"{CB_ALLOW}:{user_id}", style=BtnStyle.SUCCESS),
-                btn("❌ Rad etish", f"{CB_DENY}:{user_id}", style=BtnStyle.DANGER),
+                btn(
+                    f"{EMOJI.access_allowed.fallback} Ruxsat berish",
+                    f"{CB_ALLOW}:{user_id}",
+                    style=BtnStyle.SUCCESS,
+                    emoji_id=EMOJI.access_allowed.emoji_id,
+                ),
+                btn(
+                    f"{EMOJI.access_rejected.fallback} Rad etish",
+                    f"{CB_DENY}:{user_id}",
+                    style=BtnStyle.DANGER,
+                    emoji_id=EMOJI.access_rejected.emoji_id,
+                ),
             ]
         ]
     )
@@ -87,23 +101,39 @@ def users_panel(
     """
     lines: list[list] = []
     for user_id, label, action in rows:
-        icon, word = ACTIONS.get(action, ACTIONS["ban"])
+        entry_name, word = ACTIONS.get(action, ACTIONS["ban"])
+        icon = getattr(EMOJI, entry_name)
         blocked = action != "ban"
         lines.append(
             [
                 btn(
-                    f"{icon} {word} · {label} · {user_id}",
+                    f"{icon.fallback} {word} · {label} · {user_id}",
                     f"{CB_UNBAN if blocked else CB_BAN}:{user_id}:{page}",
                     style=BtnStyle.SUCCESS if blocked else BtnStyle.DANGER,
+                    emoji_id=icon.emoji_id,
                 )
             ]
         )
 
     nav = []
     if page > 1:
-        nav.append(btn("⬅️", f"{CB_USERS_PAGE}:{page - 1}", style=BtnStyle.PRIMARY))
+        nav.append(
+            btn(
+                EMOJI.page_prev.fallback,
+                f"{CB_USERS_PAGE}:{page - 1}",
+                style=BtnStyle.PRIMARY,
+                emoji_id=EMOJI.page_prev.emoji_id,
+            )
+        )
     if page < pages:
-        nav.append(btn("➡️", f"{CB_USERS_PAGE}:{page + 1}", style=BtnStyle.PRIMARY))
+        nav.append(
+            btn(
+                EMOJI.page_next.fallback,
+                f"{CB_USERS_PAGE}:{page + 1}",
+                style=BtnStyle.PRIMARY,
+                emoji_id=EMOJI.page_next.emoji_id,
+            )
+        )
     if nav:
         lines.append(nav)
 

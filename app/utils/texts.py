@@ -95,25 +95,6 @@ USERS_COUNT = (
 )
 
 # ---------------------------------------------------------------------------
-# Bot qanday ishlaydi
-# MUHIM: hisobotlar faqat o'zining botiga keladi (shaxsiylik).
-# ---------------------------------------------------------------------------
-HOW_IT_WORKS = (
-    f"{E_INFO} <b>Bot qanday ishlaydi?</b>\n\n"
-    "1. Meni <i>Telegram Business → Chatbotlar</i> orqali ulaysiz.\n"
-    "2. Shundan so'ng chatlaringizdagi har bir xabarni jim qayd etaman — "
-    "yuborilgan xabarlar SIZGA forvard qilinmaydi.\n"
-    "3. Suhbatdoshingiz xabarni <b>tahrirlaganida</b> yoki <b>o'chirganida</b> "
-    "aynan nima o'zgargani haqida xabar keladi. Rasm, video, GIF, stiker, "
-    "ovozli xabar va dumaloq videolar esa faqat <b>o'chirilganda</b> qayta "
-    "yuboriladi.\n"
-    "4. Har bir foydalanuvchining ma'lumotlari alohida va faqat uning "
-    "o'ziga ko'rinadi. Hech qanday ma'lumot uchinchi shaxslarga berilmaydi.\n"
-    "5. «Havola tozalash» orqali istalgan havolani kuzatuv parametrlaridan "
-    "tozalab olaman — bu xizmat hamma uchun bepul."
-)
-
-# ---------------------------------------------------------------------------
 # Havola tozalash (hamma uchun, admin panellsiz)
 # ---------------------------------------------------------------------------
 LINK_TITLE = (
@@ -218,66 +199,79 @@ ERROR_USER = "😔 Xatolik yuz berdi. Keyinroq qayta urinib ko'ring."
 
 # ---------------------------------------------------------------------------
 # Kirish nazorati: ruxsat so'rash / rad etish / ban (app/services/access.py)
+#
+# EMOJILAR app/emoji_config.py dan olinadi ("KIRISH NAZORATI" bo'limi) —
+# premium IDlarni FAQAT o'sha faylda almashtirasiz, bu yerda tegmasangiz
+# ham bo'ladi.
 # ---------------------------------------------------------------------------
+E_ACCESS_REQUEST = EMOJI.access_request.tag
+E_ACCESS_PENDING = EMOJI.access_pending.tag
+E_ACCESS_DENIED = EMOJI.access_denied.tag
+E_ACCESS_BANNED = EMOJI.access_banned.tag
+E_ACCESS_ALLOWED = EMOJI.access_allowed.tag
+E_ACCESS_REJECTED = EMOJI.access_rejected.tag
+
 # Foydalanuvchi ruxsat so'rab murojaat qilganda.
 ACCESS_PENDING = (
-    "⏳ <b>So'rovingiz yuborildi.</b>\n\n"
+    f"{E_ACCESS_PENDING} <b>So'rovingiz yuborildi.</b>\n\n"
     "Admin tasdiqlashini kuting — ruxsat berilishi bilan shu yerga xabar "
     "keladi."
 )
 
 # So'rov rad etilganda.
 ACCESS_DENIED = (
-    "🔒 <b>Ruxsat berilmagan.</b>\n\n"
+    f"{E_ACCESS_DENIED} <b>Ruxsat berilmagan.</b>\n\n"
     "Sizga bu botdan foydalanish uchun ruxsat berilmagan. Xatolik deb "
     "hisoblasangiz, admin bilan bog'laning."
 )
 
 # Banlanganda.
 ACCESS_BANNED = (
-    "🚫 <b>Siz bloklangansiz.</b>\n\n"
+    f"{E_ACCESS_BANNED} <b>Siz bloklangansiz.</b>\n\n"
     "Bu botdan foydalanish huquqingiz to'xtatilgan."
 )
 
 # -- ADMINGA (karta) --------------------------------------------------------
 ACCESS_REQUEST_ADMIN = (
-    "🔔 <b>Yangi ruxsat so'rovi</b>\n\n"
-    "👤 Kim: {who}\n"
-    "🆔 ID: <code>{user_id}</code>\n"
-    "🔗 Username: {username}\n\n"
+    f"{E_ACCESS_REQUEST} <b>Yangi ruxsat so'rovi</b>\n\n"
+    f"{E_USER} Kim: {{who}}\n"
+    f"{E_ID} ID: <code>{{user_id}}</code>\n"
+    f"{E_LINK} Username: {{username}}\n\n"
     "Quyidagi tugmalar orqali ruxsat bering yoki rad eting."
 )
 
 # Qaror qabul qilingach karta TEPASIGA qo'shiladi (tugmalar olib tashlanadi).
-ACCESS_REQUEST_ALLOWED = "✅ <b>Ruxsat berildi</b>"
-ACCESS_REQUEST_DENIED = "❌ <b>Rad etildi</b>"
+ACCESS_REQUEST_ALLOWED = f"{E_ACCESS_ALLOWED} <b>Ruxsat berildi</b>"
+ACCESS_REQUEST_DENIED = f"{E_ACCESS_REJECTED} <b>Rad etildi</b>"
 
 # -- FOYDALANUVCHIGA (qaror haqida) -----------------------------------------
 USER_APPROVED = (
-    "✅ <b>Sizga ruxsat berildi!</b>\n\n"
+    f"{E_ACCESS_ALLOWED} <b>Sizga ruxsat berildi!</b>\n\n"
     "Endi botdan to'liq foydalanishingiz mumkin."
 )
 USER_DENIED = (
-    "❌ <b>So'rovingiz rad etildi.</b>\n\n"
+    f"{E_ACCESS_REJECTED} <b>So'rovingiz rad etildi.</b>\n\n"
     "Botdan foydalanishga ruxsat berilmadi."
 )
 USER_BANNED = (
-    "🚫 <b>Siz botdan bloklandingiz.</b>\n\n"
+    f"{E_ACCESS_BANNED} <b>Siz botdan bloklandingiz.</b>\n\n"
     "Foydalanish huquqingiz admin tomonidan to'xtatildi."
 )
 USER_UNBANNED = (
-    "✅ <b>Blokingiz olindi.</b>\n\n"
+    f"{E_ACCESS_ALLOWED} <b>Blokingiz olindi.</b>\n\n"
     "Botdan yana foydalanishingiz mumkin."
 )
 
 # -- ADMIN PANELI: foydalanuvchilar ro'yxati --------------------------------
 USERS_PANEL_TITLE = (
-    "👥 <b>Foydalanuvchilar boshqaruvi</b>\n\n"
-    "Jami: <b>{total}</b> · 🟢 Faol (2 daq): <b>{online}</b>\n\n"
+    f"{EMOJI.users.tag} <b>Foydalanuvchilar boshqaruvi</b>\n\n"
+    f"Jami: <b>{{total}}</b> · {EMOJI.online_dot.tag} Faol (2 daq): <b>{{online}}</b>\n\n"
     "{body}\n\n"
     "<i>{legend}</i>"
 )
-USERS_PANEL_LEGEND = "✅ ruxsat · ⏳ kutilyapti · 🚫 ban"
+USERS_PANEL_LEGEND = (
+    f"{E_ACCESS_ALLOWED} ruxsat · {E_ACCESS_PENDING} kutilyapti · {E_ACCESS_BANNED} ban"
+)
 USERS_PANEL_EMPTY = "<i>Hozircha foydalanuvchilar yo'q.</i>"
 USERS_PANEL_LINE = "{badge} {mention} — <code>{user_id}</code>"
 USERS_PANEL_PAGE = "Sahifa {page}/{pages}"
