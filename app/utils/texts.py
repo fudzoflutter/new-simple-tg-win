@@ -191,6 +191,28 @@ REPORT_FOOTER_DELETED = (
     f"\n{E_CHAT} Chat: <b>{{chat}}</b>\n{E_CLOCK} O'chirilgan: <b>{{time}}</b>"
 )
 
+# Diagnostika: hisobot shabloni yig'ilib bo'ldi, lekin uni YUBORIB bo'lmadi.
+# Sabab Telegramdan keladi (masalan "VOICE_MESSAGES_FORBIDDEN") va jim
+# yutilmaydi — aks holda "ovozli xabar qaytmadi" ning sababi ko'rinmasdi.
+REPORT_RESEND_FILE_FORM = (
+    f"\n{E_MISSED} <i>Asl ko'rinishda yuborilmadi ({{reason}}) — "
+    f"fayl sifatida yuborildi.</i>"
+)
+REPORT_RESEND_FAILED = (
+    f"\n{E_MISSED} <i>Faylni ham yuborib bo'lmadi: {{reason}}</i>"
+)
+
+# Sabab qabul qiluvchining O'Z Telegram sozlamasi bo'lganda (ovozli xabar /
+# dumaloq video bloklangan) — qaysi sozlamani ochish kerakligi aytiladi.
+# Bir soatda ko'pi bilan bir marta qo'shiladi (reporter._voice_hint_due).
+REPORT_VOICE_SETTING_HINT = (
+    f"\n{E_INFO} <i>Telegram sozlamasi: Sozlamalar → Maxfiylik va xavfsizlik "
+    f"→ Ovozli xabarlar → «Hamma».  Shundan keyin ovozli xabar va dumaloq "
+    f"video ASL ko'rinishida keladi.\n"
+    f"Yuborilgan fayl ichida AYNAN o'sha ovoz (OGG/OPUS) — istalgan "
+    f"pleyerda ochiladi.</i>"
+)
+
 # Diagnostika: o'chirish keldi, lekin xabar keshda YO'Q — hisobot chiqmaydi.
 # Sabab ikkitadan biri: (a) xabarni BOSHQA nusxa (eski build / server deploy)
 # qabul qilgan, (b) xabar bot ishga tushishidan oldin yuborilgan.
@@ -217,6 +239,17 @@ UNKNOWN_CHAT = "Noma'lum chat"
 # ---------------------------------------------------------------------------
 # Turli
 # ---------------------------------------------------------------------------
+DUPLICATE_POLLER = (
+    f"{EMOJI.paused_dot.tag} <b>Boshqa nusxa ham polling qilmoqda ({{count}} ta)</b>\n\n"
+    "Update'lar ikki nusxa orasida bo'linib ketmoqda — ba'zi hisobotlar "
+    "kelmayaapti.\n\n"
+    "Nima qilish kerak:\n"
+    "1. Yuqoridagi nusxani to'xtating (o'sha terminalda Ctrl+C yoki\n"
+    "   taskkill //PID <PID> //F)\n"
+    "2. Yoki ikkalasidan birini o'chirib qo'yib, yangi nusxani\n"
+    "   ishga tushiring (faqat BITTA nusxa polling qilishi shart)."
+)
+
 UNKNOWN_ACTION = "🤔 Noma'lum amal — quyidagi menyudan foydalaning."
 ERROR_USER = "😔 Xatolik yuz berdi. Keyinroq qayta urinib ko'ring."
 

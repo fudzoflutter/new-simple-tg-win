@@ -38,6 +38,7 @@ from typing import Optional
 from aiogram import Bot
 from aiogram.exceptions import TelegramRetryAfter
 from aiogram.types import (
+    BufferedInputFile,
     BusinessMessagesDeleted,
     Chat,
     Message,
@@ -60,7 +61,10 @@ from app.utils.texts import (
     REPORT_EDIT,
     REPORT_FOOTER,
     REPORT_FOOTER_DELETED,
+    REPORT_RESEND_FAILED,
+    REPORT_RESEND_FILE_FORM,
     REPORT_UNCACHED,
+    REPORT_VOICE_SETTING_HINT,
     TRUNCATED,
     UNKNOWN_CHAT,
     WHO_UNKNOWN,
@@ -115,6 +119,49 @@ MEDIA_EVENTS = frozenset(
         EVENT_VIDEO_NOTE,
     }
 )
+
+# Asl ko'rinishda qayta yuborib bo'lmaganda fayl NOMI (baytlar orqali
+# yuboriladi).  Nom foydalanuvchiga ko'rinadi va Telegram turini shundan
+# ham aniqlaydi.
+FILE_NAMES = {
+    EVENT_STICKER: "sticker.webm",
+    EVENT_PHOTO: "photo.jpg",
+    EVENT_VIDEO: "video.mp4",
+    EVENT_ANIMATION: "animation.mp4",
+    EVENT_VOICE: "voice.oga",
+    EVENT_VIDEO_NOTE: "video_note.mp4",
+}
+DEFAULT_FILE_NAME = "file.bin"
+
+# "OVOZLI XABAR" MAXFIYLIGI (qabul qiluvchining Telegram sozlamasi).
+#
+# Jonli tekshiruv (haqiqiy Telegram bilan) shuni ko'rsatdi: qabul qiluvchida
+# "Ovozli xabarlar" maxfiylik sozlamasi tor bo'lsa, Telegram shu OVOZNI
+# tanigan HAR QANDAY ko'rinishni rad etadi:
+#     send_voice    -> VOICE_MESSAGES_FORBIDDEN
+#     send_audio    -> VOICE_MESSAGES_FORBIDDEN
+#     send_document(.oga/.ogg/.opus) -> VOICE_MESSAGES_FORBIDDEN
+# ya'ni bitta ham shakl o'tmaydi.  Telegram turini FAYL NOMI bo'yicha
+# aniqlaydi: neytral kengaytmali fayl (.bin) esa O'TADI — shuning uchun oxirgi
+# chora shu (kontent o'zgarmaydi, faqat nomi audio deb tanilmaydi).
+# Dumaloq video esa oddiy VIDEO sifatida bemalol ketadi (tekshirilgan).
+VOICE_PRIVACY_MARKER = "VOICE_MESSAGES_FORBIDDEN"
+VOICE_BLOCKED_FILE_NAME = "voice.bin"
+
+# Bu maslahat (qaysi sozlamani ochish kerak) bir soatda ko'pi bilan bir marta
+# qo'shiladi — har bir bloklangan ovoz uchun takrorlanib shovqin qilmasin.
+VOICE_HINT_INTERVAL = 3600.0
+_last_voice_hint = 0.0
+
+
+def _voice_hint_due() -> bool:
+    """Sozlama haqidagi maslahatni hozir qo'shish kerakmi?"""
+    global _last_voice_hint
+    now = time.monotonic()
+    if _last_voice_hint and now - _last_voice_hint < VOICE_HINT_INTERVAL:
+        return False
+    _last_voice_hint = now
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -410,10 +457,15 @@ class Reporter:
                 )
             elif event_type in MEDIA_EVENTS:
                 # 2) MEDIA: keshlangan faylni QAYTA YUBORAMIZ.
-                sent_ok = False
+                #    Natija: (yuborildimi, asl ko'rinish rad etilish sababi).
+                #    Ovozli xabar / dumaloq videoni Telegram BA'ZAN rad etadi
+                #    (qabul qiluvchining maxfiylik sozlamasi), shuning uchun
+                #    rad etilsa baytlar yuklab olinib FAYL sifatida yuboriladi.
                 file_id = self._extract_file_id(details)
+                delivered = False
+                reason: Optional[str] = None
                 if file_id:
-                    sent_ok = await self._resend_media(
+                    delivered, reason = await self._resend_media(
                         self._owner_chat, event_type, file_id,
                         header=REPORT_DELETED_MEDIA_CAPTION.format(
                             kind=label, who=who
@@ -422,8 +474,10 @@ class Reporter:
                         caption=self._media_caption(details),
                         deleted_at=deleted_hms,
                     )
-                if not sent_ok:
+                if not delivered:
                     body = REPORT_DELETED_MEDIA.format(kind=label, who=who, mid=mid)
+                    if reason:
+                        body += REPORT_RESEND_FAILED.format(reason=esc(reason))
                     await self._send(
                         self._owner_chat,
                         body + self._footer(chat_title, deleted_at=deleted_hms),
@@ -675,52 +729,172 @@ class Reporter:
         chat_title: str,
         caption: Optional[str] = None,
         deleted_at: Optional[str] = None,
-    ) -> bool:
+    ) -> tuple[bool, Optional[str]]:
         """Saqlangan media faylni qayta yuborish (o'chirilganda).
 
-        header — sarlavha ("🗑 Photo deleted" + Kim).  ``deleted_at`` —
-        o'chirilish vaqti (``HH:MM:SS``, Toshkent); u izoh oxiridagi
-        "Chat/Vaqt" qatoriga qo'yiladi.  Muvaffaqiyatsiz bo'lsa False
-        qaytaradi — chaqiruvchi matnli zaxira variant yuboradi.
+        Qaytaradi: ``(yuborildimi, asl ko'rinish rad etilish sababi)``.
+
+        * ``(True, None)``  — fayl ASL ko'rinishida ketdi (file_id bilan);
+        * ``(True, sabab)`` — asl ko'rinish rad etildi, lekin baytlar yuklab
+          olinib FAYL sifatida yuborildi (foydalanuvchi mazmunni ko'radi);
+        * ``(False, sabab)`` — umuman yuborilmadi, chaqiruvchi matnli
+          zaxira variantni yuboradi va sababni ko'rsatadi.
         """
         if chat_id is None:
-            return False
+            return False, None
         cap = self._apply_gap(header)
         if caption:
             cap += f"\n💬 Caption: {self._clip(caption)}"
         cap += self._footer(chat_title, deleted_at=deleted_at)
 
         try:
-            if event_type == EVENT_STICKER:
-                await self.bot.send_sticker(chat_id, sticker=file_id)
-                # Stikerlarga caption yozib bo'lmaydi — izoh alohida ketadi.
-                await self._send(chat_id, cap)
-            elif event_type == EVENT_PHOTO:
-                await self.bot.send_photo(
-                    chat_id, photo=file_id, caption=cap, parse_mode="HTML"
+            await self._send_typed(chat_id, event_type, file_id, cap)
+            return True, None
+        except Exception as exc:  # noqa: BLE001 – file_id muddati / cheklov
+            reason = self._reason_of(exc)
+            # SABAB KO'RINADIGAN bo'lishi shart: jim yutilsa "ovozli xabar
+            # qaytmadi" ning sababini hech qachon bilmaymiz.
+            logger.error(
+                "Resend refused (type=%s, file=%s...): %s",
+                event_type,
+                file_id[:12],
+                reason,
+                exc_info=True,
+            )
+
+        # 2) Zaxira yo'l: fayl baytlarini yuklab, FAYL sifatida yuboramiz.
+        #    "Ovozli xabar" va "dumaloq video" ko'rinishini Telegram qabul
+        #    qiluvchining sozlamasiga qarab rad etishi mumkin — oddiy fayl
+        #    (document / audio) esa har doim o'tadi.
+        cap += REPORT_RESEND_FILE_FORM.format(reason=esc(reason))
+        if VOICE_PRIVACY_MARKER in reason and _voice_hint_due():
+            # Sabab foydalanuvchining O'Z Telegram sozlamasi — qaysi birini
+            # ochish kerakligini aytib qo'yamiz (bir soatda bir marta).
+            cap += REPORT_VOICE_SETTING_HINT
+        try:
+            data = await self._download(file_id)
+            await self._send_as_file(chat_id, event_type, data, cap, reason=reason)
+            return True, reason
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "File fallback failed (type=%s): %s",
+                event_type,
+                self._reason_of(exc),
+                exc_info=True,
+            )
+            return False, reason
+
+    async def _send_typed(
+        self, chat_id: int, event_type: str, file_id: str, cap: str
+    ) -> None:
+        """Faylni ASL ko'rinishida yuboradi (xato bo'lsa — ko'taradi)."""
+        if event_type == EVENT_STICKER:
+            await self.bot.send_sticker(chat_id, sticker=file_id)
+            # Stikerlarga caption yozib bo'lmaydi — izoh alohida ketadi.
+            await self._send(chat_id, cap)
+        elif event_type == EVENT_PHOTO:
+            await self.bot.send_photo(
+                chat_id, photo=file_id, caption=cap, parse_mode="HTML"
+            )
+        elif event_type == EVENT_VIDEO:
+            await self.bot.send_video(
+                chat_id, video=file_id, caption=cap, parse_mode="HTML"
+            )
+        elif event_type == EVENT_ANIMATION:
+            await self.bot.send_animation(
+                chat_id, animation=file_id, caption=cap, parse_mode="HTML"
+            )
+        elif event_type == EVENT_VOICE:
+            await self.bot.send_voice(
+                chat_id, voice=file_id, caption=cap, parse_mode="HTML"
+            )
+        elif event_type == EVENT_VIDEO_NOTE:
+            # Dumaloq videoga caption yozib bo'lmaydi — izoh alohida ketadi.
+            await self.bot.send_video_note(chat_id, video_note=file_id)
+            await self._send(chat_id, cap)
+        else:
+            raise ValueError(f"noma'lum media turi: {event_type}")
+
+    async def _download(self, file_id: str) -> bytes:
+        """Telegramdan fayl baytlarini yuklab oladi (zaxira yo'l uchun)."""
+        buffer = await self.bot.download(file_id)
+        if buffer is None:
+            raise RuntimeError("fayl yuklab olinmadi")
+        data = buffer.getvalue() if hasattr(buffer, "getvalue") else buffer.read()
+        if not data:
+            raise RuntimeError("fayl bo'sh")
+        return data
+
+    async def _send_as_file(
+        self,
+        chat_id: int,
+        event_type: str,
+        data: bytes,
+        cap: str,
+        *,
+        reason: Optional[str] = None,
+    ) -> None:
+        """Baytlarni FAYL ko'rinishida yuboradi (asl ko'rinish rad etilganda).
+
+        Ovozli xabar -> audio (ijro etiladi), dumaloq video -> video, qolgani
+        -> document.  Har bir qadam xato bersa, eng oxirgi chora document.
+
+        ``reason`` — Telegram bergan rad javobi.  Unda ovozli-xabar maxfiyligi
+        (VOICE_MESSAGES_FORBIDDEN) bo'lsa, audio ko'rinishlarini umuman
+        sinab o'tirmaymiz (ular baribir rad etiladi) — to'g'ridan-to'g'ri
+        neytral nomli fayl yuboriladi.
+        """
+        muted = bool(reason) and VOICE_PRIVACY_MARKER in reason
+        name = FILE_NAMES.get(event_type, DEFAULT_FILE_NAME)
+        if muted and event_type == EVENT_VOICE:
+            name = VOICE_BLOCKED_FILE_NAME
+
+        def upload() -> BufferedInputFile:
+            # Har bir urinish uchun YANGI obyekt (oqim qayta ishlatilmaydi).
+            return BufferedInputFile(data, filename=name)
+
+        if event_type == EVENT_VOICE and not muted:
+            try:
+                await self.bot.send_audio(
+                    chat_id, audio=upload(), caption=cap, parse_mode="HTML"
                 )
-            elif event_type == EVENT_VIDEO:
+                return
+            except Exception:  # noqa: BLE001
+                logger.info("Audio sifatida ham yuborilmadi — document")
+        elif event_type == EVENT_VIDEO_NOTE:
+            # Dumaloq video oddiy VIDEO sifatida o'tadi (maxfiylik sozlamasi
+            # ovozli xabarlarga tegishli, videoga emas) — tekshirilgan.
+            try:
                 await self.bot.send_video(
-                    chat_id, video=file_id, caption=cap, parse_mode="HTML"
+                    chat_id, video=upload(), caption=cap, parse_mode="HTML"
                 )
-            elif event_type == EVENT_ANIMATION:
-                await self.bot.send_animation(
-                    chat_id, animation=file_id, caption=cap, parse_mode="HTML"
-                )
-            elif event_type == EVENT_VOICE:
-                await self.bot.send_voice(
-                    chat_id, voice=file_id, caption=cap, parse_mode="HTML"
-                )
-            elif event_type == EVENT_VIDEO_NOTE:
-                # Dumaloq videoga caption yozib bo'lmaydi — izoh alohida ketadi.
-                await self.bot.send_video_note(chat_id, video_note=file_id)
-                await self._send(chat_id, cap)
-            else:
-                return False
-            return True
-        except Exception:  # noqa: BLE001 – fayl muddati tugagan bo'lishi mumkin
-            logger.info("Resend of cached media failed (type=%s)", event_type)
-            return False
+                return
+            except Exception:  # noqa: BLE001
+                logger.info("Video sifatida ham yuborilmadi — document")
+
+        if event_type == EVENT_STICKER:
+            # Stikerga izoh yozilmaydi — u alohida xabar bo'lib ketadi.
+            await self.bot.send_document(chat_id, document=upload())
+            await self._send(chat_id, cap)
+            return
+        await self.bot.send_document(
+            chat_id, document=upload(), caption=cap, parse_mode="HTML"
+        )
+
+    @staticmethod
+    def _reason_of(exc: BaseException) -> str:
+        """Xato matnidan QISQA sabab (Telegram izohi) ajratib oladi."""
+        raw = getattr(exc, "message", None) or str(exc)
+        text = " ".join(str(raw).split())
+        for prefix in (
+            "Telegram server says - ",
+            "Bad Request: ",
+            "Forbidden: ",
+            "Conflict: ",
+        ):
+            if text.startswith(prefix):
+                text = text[len(prefix):]
+        return (text or exc.__class__.__name__)[:140]
 
     @staticmethod
     def _apply_gap(html: str) -> str:

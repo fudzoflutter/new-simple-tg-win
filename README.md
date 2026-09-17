@@ -161,7 +161,10 @@ is polling Telegram right now).
   * edit → `✏️ Xabar tahrirlandi` with 📱 Default (old) → 📲 Edited (new);
   * delete (text) → the full original text;
   * delete (media) → the cached file is re-sent (photo / video / GIF /
-    sticker / voice / circular video).
+    sticker / voice / circular video). If Telegram refuses the file's original
+    form, the bot downloads it and re-sends it as audio / video / document,
+    so the content still arrives — see
+    [Voice / circular video not coming back](#-voice--circular-video-not-coming-back).
   The user's own edits/deletes are never reported.
 * **Link cleaner** — any message containing a link gets the tracking
   parameters stripped; the cleaned link is returned (only when something was
@@ -201,6 +204,36 @@ Two layers now prevent that:
   `409` errors within a minute send the owner a Telegram alert (at most once
   per 10 minutes) telling exactly where to look. A silent, half-working bot is
   no longer possible.
+
+### 🔇 "Voice / circular video not coming back"
+
+Symptoms: text, photo, video, GIF and stickers are reported fine, but deleted
+voice notes and circular videos arrive either as a bare card
+(`🆔 Xabar: <id>`) or not at all. The cached `file_id` is **not** the problem —
+the re-send call itself is refused. Verified live against Telegram:
+
+```
+send_voice                           -> 400 VOICE_MESSAGES_FORBIDDEN
+send_audio (uploaded bytes)          -> 400 VOICE_MESSAGES_FORBIDDEN
+send_document  voice.oga/ogg/opus    -> 400 VOICE_MESSAGES_FORBIDDEN
+send_video_note                      -> 400 VOICE_MESSAGES_FORBIDDEN
+send_document  voice.bin             -> OK
+send_video     (circular video bytes)-> OK
+```
+
+`VOICE_MESSAGES_FORBIDDEN` is the **recipient's** *Voice Messages* privacy
+setting (it covers voice **and** circular video, and a bot is never a contact).
+Telegram decides the content type by the **file name**, so the bot still
+delivers the same bytes:
+
+* circular video → sent as a normal **video**;
+* voice note → sent as **`voice.bin`** (OGG/OPUS — plays in any player).
+
+The caption names the reason, and (at most once an hour) the setting to change:
+*Settings → Privacy and Security → **Voice Messages** → Everybody.* Turning
+that on makes the real voice / circular-video forms work again. Only when no
+form gets through does the report degrade to a card — now with the reason
+always printed, never silently.
 
 ### Performance
 

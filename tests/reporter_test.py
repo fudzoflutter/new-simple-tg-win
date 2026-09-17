@@ -31,11 +31,18 @@ It plugs a FakeBot + FakeDB into Reporter and checks the STRICT rules:
     o'chirish yangilamasi DB kesh yozuvidan OLDIN ishlanadi (aiogram
     update'larni parallel bajaradi).  Xotiradagi tezkor kesh tufayli hisobot
     baribir chiqadi — matn ham, ovozli xabar ham, dumaloq video ham.
+15. ASL KO'RINISH RAD ETILSA: ovozli xabar / dumaloq video uchun Telegram
+    xato qaytarsa (HAQIQIY Telegramda tekshirilgan: VOICE_MESSAGES_FORBIDDEN),
+    fayl baytlari yuklab olinib qayta yuboriladi — video/dumaloq video VIDEO
+    bo'lib, ovoz esa neytral nomli fayl (voice.bin) bo'lib ketadi (Telegram
+    turni FAYL NOMI bo'yicha aniqlaydi), va SABAB (+ qaysi sozlamani ochish
+    kerakligi) izohda ko'rinadi — hech narsa jim yo'qolmaydi.
 """
 
 from __future__ import annotations
 
 import asyncio
+import io
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -120,7 +127,26 @@ class FakeBot:
         # Qayta yuborilgan fayllar: (method, file_id) — fayl AYNAN o'sha
         # keshlangan file_id bilan ketganini isbotlash uchun.
         self.files: list[tuple[str, str]] = []
-        self.fail_media = False  # True -> media yuborish xato beradi (fallback)
+        # Yuklab olingan baytlar bilan ketgan fayllar: (method, data, nomi).
+        self.uploads: list[tuple[str, bytes, str]] = []
+        self.downloaded: list[str] = []
+        self.fail_media = False  # True -> photo yuborish xato beradi (fallback)
+        # Muayyan metodlarni "rad etish" (Telegram xatosi kabi):
+        # masalan {"send_voice"}, {"send_voice", "send_audio"}.
+        self.fail_methods: set[str] = set()
+        self.fail_text = "Telegram server says - Bad Request: VOICE_MESSAGES_FORBIDDEN"
+        self.fail_download = False
+
+    def _guard(self, method: str) -> None:
+        if method in self.fail_methods:
+            raise RuntimeError(self.fail_text)
+
+    async def download(self, file: Any, **kw: Any) -> Any:
+        """file_id -> baytlar (zaxira yo'l shu yoqdan foydalanadi)."""
+        if self.fail_download:
+            raise RuntimeError("fayl yuklab olinmadi (test)")
+        self.downloaded.append(str(file))
+        return io.BytesIO(b"BYTES:" + str(file).encode())
 
     async def send_message(self, chat_id: int, text: str, **kw: Any) -> None:
         self.sent.append(("message", text))
@@ -131,9 +157,13 @@ class FakeBot:
         self.sent.append(("photo", caption))
         self.files.append(("photo", photo))
 
-    async def send_video(self, chat_id: int, video: str, caption: str = "", **kw: Any) -> None:
+    async def send_video(self, chat_id: int, video: Any, caption: str = "", **kw: Any) -> None:
+        self._guard("send_video")
         self.sent.append(("video", caption))
-        self.files.append(("video", video))
+        if isinstance(video, str):
+            self.files.append(("video", video))
+        else:  # yuklangan baytlar
+            self.uploads.append(("video", video.data, video.filename))
 
     async def send_animation(self, chat_id: int, animation: str, caption: str = "", **kw: Any) -> None:
         self.sent.append(("animation", caption))
@@ -144,13 +174,25 @@ class FakeBot:
         self.files.append(("sticker", sticker))
 
     async def send_voice(self, chat_id: int, voice: str, caption: str = "", **kw: Any) -> None:
+        self._guard("send_voice")
         self.sent.append(("voice", caption))
         self.files.append(("voice", voice))
 
     async def send_video_note(self, chat_id: int, video_note: str, **kw: Any) -> None:
+        self._guard("send_video_note")
         # Dumaloq videoga caption yozib bo'lmaydi — izoh alohida xabar bo'ladi.
         self.sent.append(("video_note", ""))
         self.files.append(("video_note", video_note))
+
+    async def send_audio(self, chat_id: int, audio: Any, caption: str = "", **kw: Any) -> None:
+        self._guard("send_audio")
+        self.sent.append(("audio", caption))
+        self.uploads.append(("audio", audio.data, audio.filename))
+
+    async def send_document(self, chat_id: int, document: Any, caption: str = "", **kw: Any) -> None:
+        self._guard("send_document")
+        self.sent.append(("document", caption))
+        self.uploads.append(("document", document.data, document.filename))
 
 
 class FakeDB:
@@ -542,10 +584,12 @@ async def run_all() -> None:
         assert "20:00:00" not in caption and "23:00:00" not in caption, caption
         assert clock["calls"] == 1, clock["calls"]
 
-        # (c) Media qayta yuborilmasa — matnli zaxira hisobot ham SHU vaqtni
-        #     ko'rsatadi (fallback yo'lida ham vaqt yo'qolmaydi).
+        # (c) Media QAYTA YUBORILMASA (file_id xato va baytlar ham yuklanmaydi)
+        #     — matnli zaxira hisobot ham SHU vaqtni ko'rsatadi (fallback
+        #     yo'lida ham vaqt yo'qolmaydi).
         fallback_bot = FakeBot()
-        fallback_bot.fail_media = True
+        fallback_bot.fail_media = True   # photo file_id bilan ketmaydi
+        fallback_bot.fail_download = True  # baytlar ham olinmaydi
         rf = Reporter(fallback_bot)
         clock["calls"] = 0
         await rf.report_incoming(
@@ -674,6 +718,113 @@ async def run_all() -> None:
 
     clear_instant_cache()
     print("Scenario J (tez o'chirish — kesh poygasi) OK ✅")
+
+    # Scenario K: OVOZLI XABAR / DUMALOQ VIDEO — Telegram ASL KO'RINISHNI rad
+    # etsa ham hisobot yo'qolmaydi.
+    #
+    # Foydalanuvchi shikoyati: "ovozli xabar va dumaloq video qaytmayapti" —
+    # keshlangan file_id esa HAQIQIY (get_file ishlaydi, baytlari yuklanadi).
+    # Demak xato faylda emas, YUBORISHNING O'ZIDA: Telegram ovozli xabar va
+    # dumaloq videoni qabul qiluvchining sozlamasiga qarab rad etadi
+    # ("VOICE_MESSAGES_FORBIDDEN").  Eski kod bu xatoni INFO darajasida
+    # yutib, matnli kartaga o'tardi — foydalanuvchi esa faqat "fayl kelmadi"
+    # deb ko'rardi.  Endi: (1) asl ko'rinish; (2) rad etilsa baytlar yuklab
+    # olinib FAYL (audio/video/document) sifatida yuboriladi; (3) sabab
+    # izohda/kartada KO'RINADI.
+    kdb = FakeDB()
+    rep.db = kdb  # type: ignore[assignment]
+    invalidate_connection()
+    clear_instant_cache()
+
+    # (a) OVOZ + "ovozli xabar" maxfiyligi.  Jonli tekshiruv (haqiqiy Telegram)
+    #     shuni ko'rsatdi: bu holatda send_voice, send_audio va hatto
+    #     .oga/.ogg/.opus FAYL ham rad etiladi (hammasi VOICE_MESSAGES_FORBIDDEN),
+    #     faqat neytral nomli fayl o'tadi.  Shuning uchun audio urinmaymiz.
+    rep._last_voice_hint = 0.0  # maslahat vaqti cheklovi testga xalaqit bermasin
+    kb = FakeBot()
+    kb.fail_methods = {"send_voice"}
+    rk = Reporter(kb)
+    await rk.report_incoming(
+        FakeMessage(901, PARTNER_ID, media={"voice": SimplePhoto("VOICE_FID")})
+    )
+    await rk.report_deleted(SimpleDeleted([901]))
+    assert kb.files == [], f"file_id bilan emas, fayl bilan ketishi kerak: {kb.files}"
+    assert kb.downloaded == ["VOICE_FID"], kb.downloaded
+    assert [u[0] for u in kb.uploads] == ["document"], kb.uploads
+    method, data, name = kb.uploads[0]
+    assert data.startswith(b"BYTES:"), data
+    assert name == rep.VOICE_BLOCKED_FILE_NAME, name
+    caption = [t for k, t in kb.sent if k == "document"][0]
+    assert "VOICE_MESSAGES_FORBIDDEN" in caption, caption
+    assert "fayl sifatida yuborildi" in caption, caption
+    assert "Ovozli xabarlar" in caption, caption  # qaysi sozlamani ochish kerak
+    assert "🕒 O'chirilgan: <b>" in caption, caption
+    # Mazmun ketdi, shuning uchun "Xabar: <id>" kartasi YUBORILMAYDI.
+    assert not any("Xabar:" in t for k, t in kb.sent if k == "message"), kb.sent
+
+    # (b) Dumaloq video rad etildi -> VIDEO bo'lib ketadi.  Maxfiylik
+    #     sozlamasi videoga TEGMAYDI — shuning uchun video uriniladi.
+    kb2 = FakeBot()
+    kb2.fail_methods = {"send_video_note"}
+    rk2 = Reporter(kb2)
+    await rk2.report_incoming(
+        FakeMessage(902, PARTNER_ID, media={"video_note": SimplePhoto("NOTE_FID")})
+    )
+    await rk2.report_deleted(SimpleDeleted([902]))
+    assert [u[0] for u in kb2.uploads] == ["video"], kb2.uploads
+    assert kb2.uploads[0][2] == "video_note.mp4", kb2.uploads
+
+    # (c) BOSHQA sabab (maxfiylik emas) -> avval AUDIO sifatida uriniladi.
+    kb3 = FakeBot()
+    kb3.fail_methods = {"send_voice"}
+    kb3.fail_text = "Telegram server says - Bad Request: wrong file identifier"
+    rk3 = Reporter(kb3)
+    await rk3.report_incoming(
+        FakeMessage(903, PARTNER_ID, media={"voice": SimplePhoto("V2")})
+    )
+    await rk3.report_deleted(SimpleDeleted([903]))
+    assert [u[0] for u in kb3.uploads] == ["audio"], kb3.uploads
+    assert kb3.uploads[0][2] == "voice.oga", kb3.uploads
+
+    # (c2) Audio ham rad etilsa -> document (ASL nomi bilan, neytral emas -
+    #      sabab maxfiylik emas).
+    kb6 = FakeBot()
+    kb6.fail_methods = {"send_voice", "send_audio"}
+    kb6.fail_text = "Telegram server says - Bad Request: some other refusal"
+    rk6 = Reporter(kb6)
+    await rk6.report_incoming(
+        FakeMessage(906, PARTNER_ID, media={"voice": SimplePhoto("V5")})
+    )
+    await rk6.report_deleted(SimpleDeleted([906]))
+    assert [u[0] for u in kb6.uploads] == ["document"], kb6.uploads
+    assert kb6.uploads[0][2] == "voice.oga", kb6.uploads
+
+    # (d) Yuklab olish ham ishlamasa — sabab kartada (jim yo'qolmaydi).
+    kb4 = FakeBot()
+    kb4.fail_methods = {"send_voice"}
+    kb4.fail_download = True
+    rk4 = Reporter(kb4)
+    await rk4.report_incoming(
+        FakeMessage(904, PARTNER_ID, media={"voice": SimplePhoto("V3")})
+    )
+    await rk4.report_deleted(SimpleDeleted([904]))
+    card = [t for k, t in kb4.sent if k == "message"]
+    assert len(card) == 1 and "Xabar: <code>904</code>" in card[0], card
+    assert "Faylni ham yuborib bo'lmadi" in card[0], card
+    assert "VOICE_MESSAGES_FORBIDDEN" in card[0], card
+
+    # (e) Ishlaydigan holatda QO'SHIMCHA yuklash bo'lmaydi — tezlik o'zgarmaydi.
+    kb5 = FakeBot()
+    rk5 = Reporter(kb5)
+    await rk5.report_incoming(
+        FakeMessage(905, PARTNER_ID, media={"voice": SimplePhoto("V4")})
+    )
+    await rk5.report_deleted(SimpleDeleted([905]))
+    assert kb5.files == [("voice", "V4")], kb5.files
+    assert kb5.uploads == [] and kb5.downloaded == [], (kb5.uploads, kb5.downloaded)
+
+    clear_instant_cache()
+    print("Scenario K (ovoz/dumaloq video rad etilsa — fayl zaxirasi) OK ✅")
 
     print("REPORTER RULES TEST PASSED ✅  "
           "(silent sends, edit/delete-only reports, partner-only, usernames, "

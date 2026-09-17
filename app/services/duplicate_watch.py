@@ -84,7 +84,12 @@ class ConflictWatcher(logging.Handler):
         self._times.append(now)
         if len(self._times) < self._trigger:
             return
-        if now - self._last_alert < self._cooldown:
+        # DIQQAT: `_last_alert` 0.0 = "hali ogohlantirilmagan".  Buni "juda
+        # eski vaqt" deb hisoblab bo'lmaydi: `time.monotonic()` yangi
+        # yuklangan mashina/konteynerda kichik bo'ladi (uptime < cooldown),
+        # natijada BIRINCHI ogohlantirish — eng kerakli paytda — yutilib
+        # ketardi.  "Hali ogohlantirilmagan" holatini alohida tekshiramiz.
+        if self._last_alert and now - self._last_alert < self._cooldown:
             return
         self._last_alert = now
         self.alerts += 1
