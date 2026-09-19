@@ -199,6 +199,14 @@ Two layers now prevent that:
   other copy's host / PID / start time with clear instructions. A hard-killed
   process frees the lock by itself once its heartbeat goes stale. `FORCE_POLL=1`
   disables the check.
+  * **Redeploys / restarts are allowed** — on a managed platform (Railway)
+    the previous container stays alive for a few seconds after the new one
+    starts, so its heartbeat is still "fresh". The lock stores the platform's
+    `RAILWAY_SERVICE_ID` / `RAILWAY_DEPLOYMENT_ID`, and a **managed copy takes
+    the lock over from its own service** instead of refusing to start. The
+    displaced copy notices on its next heartbeat (≤ 20 s) and stops polling,
+    so updates never split. Another *service* (different id) is never touched,
+    and local dev keeps the strict same-machine check.
 * **409 watcher** (`app/services/duplicate_watch.py`) — a copy running *older*
   code cannot see the lock, so `aiogram.dispatcher` is monitored instead: three
   `409` errors within a minute send the owner a Telegram alert (at most once

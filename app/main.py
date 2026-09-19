@@ -187,8 +187,19 @@ async def main() -> None:
     # bo'lib qolmaydi.
     watchdog_task = asyncio.create_task(_watchdog_supervisor())
 
+    # Qulf boshqa nusxaga (masalan YANGI deployga) o'tsa, eski nusxa
+    # pollingni to'xtatishi SHART — aks holda ikki nusxa birga update
+    # o'qib, 409 Conflict boshlanadi va xabarlar bo'linib ketadi.
+    async def _on_lock_lost() -> None:
+        try:
+            await dp.stop_polling()
+        except RuntimeError:
+            pass  # polling hali boshlanmagan bo'lsa — to'xtatadigan narsa yo'q
+
     # Bir nusxa qulfining heartbeat'i: 20 sekundda bitta yengil UPDATE.
-    lock_task = asyncio.create_task(instance_lock.heartbeat_loop())
+    lock_task = asyncio.create_task(
+        instance_lock.heartbeat_loop(on_lost=_on_lock_lost)
+    )
 
     # 409 (boshqa nusxa polling qilmoqda) bo'lsa adminga ANIQ xabar yuboriladi
     # — aks holda muammo jimgina davom etadi va faqat "ba'zi hisobot

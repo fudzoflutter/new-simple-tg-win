@@ -95,21 +95,7 @@ USERS_COUNT = (
     f"{EMOJI.online_dot.tag} Oxirgi 2 daqiqada faol: <b>{{online}}</b>"
 )
 
-# ---------------------------------------------------------------------------
-# Havola tozalash (hamma uchun, admin panellsiz)
-# ---------------------------------------------------------------------------
-LINK_TITLE = (
-    f"{E_LINK} <b>Havola tozalash</b>\n\n"
-    "Menga istalgan havolani yuboring — men undan kuzatuv "
-    "(<i>tracking</i>) parametrlarini olib tashlab, toza havolani "
-    "qaytaraman.\n\n"
-    "Masalan:\n<code>https://site.com/a?utm_source=x&amp;fbclid=y</code>\n"
-    "→ <code>https://site.com/a</code>\n\n"
-    "✅ Bu xizmat <b>hamma uchun</b> bepul va admin panel talab qilmaydi."
-)
 
-LINK_CLEANED = f"{E_LINK} <b>Toza havola:</b>\n<code>{{url}}</code>"
-LINK_MULTI_HEADER = f"{E_LINK} <b>Toza havolalar:</b>"
 
 # ---------------------------------------------------------------------------
 # Ulanish haqidagi xabarlar

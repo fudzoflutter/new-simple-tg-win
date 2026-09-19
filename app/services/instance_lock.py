@@ -22,6 +22,25 @@ bo'lsa (taskkill), heartbeat ``STALE_SECONDS`` dan keyin eskiradi va
 keyingi start qulfni o'zi oladi.  Shoshilinch holatda ``FORCE_POLL=1``
 (env.txt) qulfni butunlay o'chirib qo'yadi.
 
+DEPLOY (Railway/Render) HOLATI
+------------------------------
+Platformada har yangi deploy ESKI konteynerni darhol o'ldirmaydi: yangi
+nusxa ishga tushgach, eski nusxa biroz vaqt (overlap) tirik turadi va
+faqat keyin SIGTERM oladi.  Shu sababli yangi deploy ishga tushganda
+qulfdagi heartbeat hali "yangi" (60 sekunddan yosh) bo'ladi va ilgarigi
+mantiq yangi nusxani "ikkinchi nusxa" deb to'xtatib, BOTNI BUTUNLAY
+O'CHIRIB QO'YARDI — qulfdagi eski nusxa esa tez orada o'ldirilardi.
+
+Yechim: qulf yozuvi endi ``service`` va ``deployment`` identifikatorlarini
+saqlaydi (Railway ``RAILWAY_SERVICE_ID`` / ``RAILWAY_DEPLOYMENT_ID``).
+BOSHQARILADIGAN nusxa (``service`` berilgan) SHU servisning eski qulfini
+majburan oladi — bu xavfsiz, chunki platforma eski nusxani albatta
+almashtiradi (yangi deploy ham, qayta ishga tushirish ham shu holatga
+to'g'ri keladi).  Eski nusxa keyingi heartbeat'ida qulfni yo'qotadi va
+pollingni to'xtatadi (:func:`heartbeat_loop`), shuning uchun ikki nusxa
+birga qolib update'larni bo'lishib yubora olmaydi.  BOSHQA servisning
+qulfiga hech qachon tegilmaydi.
+
 Bu qulf ESKI kod bilan ishlayotgan nusxani ko'ra olmaydi — bunday holatni
 :mod:`app.services.duplicate_watch` aniqlaydi (409 Conflict kuzatuvchisi).
 """
@@ -33,7 +52,7 @@ import logging
 import os
 import socket
 from datetime import datetime
-from typing import Optional
+from typing import Awaitable, Callable, Optional
 
 from app.config import settings
 from app.database import db
@@ -58,6 +77,10 @@ WAIT_STEP_SECONDS = 10.0
 # Hozirgi nusxa identifikatori (ishga tushganda o'rnatiladi).
 _instance: Optional[str] = None
 
+# Platforma (deploy) identifikatorlari — qulfdagi yozuv bilan solishtiriladi.
+_service: Optional[str] = None
+_deployment: Optional[str] = None
+
 
 def hostname() -> str:
     """Kompyuter/server nomi (log va xabar uchun; sir emas)."""
@@ -70,6 +93,35 @@ def hostname() -> str:
 def instance_id() -> str:
     """Nusxani taniydigan nom: ``kompyuter:PID``."""
     return f"{hostname()}:{os.getpid()}"
+
+
+def _env_first(*keys: str) -> Optional[str]:
+    """Berilgan muhit o'zgaruvchilaridan birinchisining qiymati (bo'shmasi yo'q)."""
+    for key in keys:
+        value = os.getenv(key, "").strip()
+        if value:
+            return value
+    return None
+
+
+def deployment_identity() -> tuple[Optional[str], Optional[str]]:
+    """Joriy nusxaning ``(service, deployment)`` identifikatori.
+
+    Platforma (Railway, Render, ...) bu qiymatlarni o'zi beradi:
+
+    * Railway — ``RAILWAY_SERVICE_ID`` (barcha deploylar uchun bir xil) va
+      ``RAILWAY_DEPLOYMENT_ID`` (har yangi deployda boshqacha).
+    * Umumiy/DIY — ``DEPLOY_SERVICE`` va ``DEPLOY_ID`` (Docker/systemd
+      foydalanuvchi qo'lda o'rnatishi mumkin).
+
+    Mahalliy ishga tushirishda ikkisi ham ``None`` bo'ladi — u holda qulf
+    avvalgidek qat'iy ishlaydi (bir xil kompyuterda ikkinchi nusxa
+    to'xtatiladi).
+    """
+    return (
+        _env_first("RAILWAY_SERVICE_ID", "RAILWAY_SERVICE_NAME", "DEPLOY_SERVICE"),
+        _env_first("RAILWAY_DEPLOYMENT_ID", "DEPLOY_ID"),
+    )
 
 
 def current_instance() -> Optional[str]:
@@ -129,8 +181,9 @@ async def acquire() -> Optional[dict]:
     ``dict``  — boshqa TIRIK nusxa bor; qiymat o'sha nusxa yozuvi
                 (chaqiruvchi polling boshlamasligi kerak).
     """
-    global _instance
+    global _instance, _service, _deployment
     _instance = instance_id()
+    _service, _deployment = deployment_identity()
 
     if settings.force_poll:
         logger.warning(
@@ -145,7 +198,7 @@ async def acquire() -> Optional[dict]:
     while True:
         try:
             holder = await db.claim_instance_lock(
-                _instance, host, os.getpid(), STALE_SECONDS
+                _instance, host, os.getpid(), STALE_SECONDS, _service, _deployment
             )
         except Exception:  # noqa: BLE001 – baza xatosi botni to'xtatmasin
             logger.exception("Bir nusxa qulfini olishda xato — qulfsiz davom etamiz")
@@ -157,6 +210,8 @@ async def acquire() -> Optional[dict]:
 
         # Egasi SHU kompyuterda bo'lsa, ehtimol uni hozir o'ldirdik (yoki u
         # o'layapti): heartbeat eskirishini kutamiz, keyin qulfni olamiz.
+        # (Boshqariladigan deploy bu holatga yetib kelmaydi — u qulfni
+        # yuqoridagi SQL orqali darhol oladi.)
         same_host = (holder.get("host") or "") == host
         if not same_host or waited >= WAIT_FOR_LOCAL_SECONDS:
             return holder
@@ -171,11 +226,17 @@ async def acquire() -> Optional[dict]:
         waited += WAIT_STEP_SECONDS
 
 
-async def heartbeat_loop() -> None:
+async def heartbeat_loop(
+    on_lost: Optional[Callable[[], Awaitable[None]]] = None,
+) -> None:
     """Har ``HEARTBEAT_SECONDS`` da qulf "tirik" ekanini tasdiqlaydi.
 
     Bitta yengil UPDATE — 20 sekundda bir marta, ya'ni tezlikka ta'siri
     o'lchab bo'lmaydigan darajada kichik.
+
+    ``on_lost`` — qulf boshqa nusxaga (masalan YANGI deployga) o'tib
+    ketganda chaqiriladi: shu jarayon pollingni to'xtatishi kerak, aks
+    holda ikki nusxa birga update o'qib, 409 Conflict bo'ladi.
     """
     while True:
         await asyncio.sleep(HEARTBEAT_SECONDS)
@@ -190,10 +251,15 @@ async def heartbeat_loop() -> None:
             # Qulfni boshqa nusxa olib qo'ydi: ikki nusxa BIRGA poll
             # qilmasligi uchun shu jarayon to'xtatilishi kerak.
             logger.error(
-                "Bir nusxa qulfini boshqa jarayon oldi — bu nusxa endi "
-                "update'larga ega bo'lmasligi mumkin. Botni qayta ishga "
-                "tushiring (faqat BITTA nusxa!)."
+                "Bir nusxa qulfini boshqa jarayon oldi (yangi deploy?) — "
+                "bu nusxa pollingni to'xtatadi, aks holda update'lar ikki "
+                "nusxa orasida bo'linib ketadi (409 Conflict)."
             )
+            if on_lost is not None:
+                try:
+                    await on_lost()
+                except Exception:  # noqa: BLE001 – to'xtatish urinishi yiqilmasin
+                    logger.exception("Qulf yo'qolganda pollingni to'xtatib bo'lmadi")
             return
 
 

@@ -79,6 +79,8 @@ CREATE TABLE IF NOT EXISTS instance_lock (
     instance     TEXT NOT NULL,
     host         TEXT,
     pid          INTEGER,
+    service      TEXT,
+    deployment   TEXT,
     started_at   TEXT NOT NULL,
     heartbeat_at TEXT NOT NULL
 );
@@ -110,6 +112,15 @@ class SqliteDatabase:
         await cursor.close()
         if "sender_id" not in event_cols:
             await self._conn.execute("ALTER TABLE events ADD COLUMN sender_id INTEGER")
+        # Migratsiya: deploy (Railway) identifikatorlari — yangi deploy eski
+        # deploy qulfini xavfsiz egallashi uchun (instance_lock.py).
+        cursor = await self._conn.execute("PRAGMA table_info(instance_lock)")
+        lock_cols = {row[1] for row in await cursor.fetchall()}
+        await cursor.close()
+        if "service" not in lock_cols:
+            await self._conn.execute("ALTER TABLE instance_lock ADD COLUMN service TEXT")
+        if "deployment" not in lock_cols:
+            await self._conn.execute("ALTER TABLE instance_lock ADD COLUMN deployment TEXT")
         await self._conn.commit()
         logger.info("SQLite ready at %s (Supabase not configured)", settings.db_path)
 
@@ -449,9 +460,20 @@ class SqliteDatabase:
     # ======================================================================
 
     async def claim_instance_lock(
-        self, instance: str, host: str, pid: int, stale_seconds: float
+        self,
+        instance: str,
+        host: str,
+        pid: int,
+        stale_seconds: float,
+        service: Optional[str] = None,
+        deployment: Optional[str] = None,
     ) -> Optional[dict]:
-        """Qulfni ATOMIK olish; ``None`` — endi bizda, aks holda egasi."""
+        """Qulfni ATOMIK olish; ``None`` — endi bizda, aks holda egasi.
+
+        Postgres versiyasi bilan AYNAN bir xil: boshqariladigan deploy
+        (``service`` berilgan) SHU servisning eski qulfini (hatto
+        heartbeat hali "yangi" bo'lsa ham) egallaydi.
+        """
         now = now_iso()
         stale_before = (
             datetime.now() - timedelta(seconds=stale_seconds)
@@ -460,20 +482,28 @@ class SqliteDatabase:
             self._q(
                 """
             INSERT INTO instance_lock
-                (id, instance, host, pid, started_at, heartbeat_at)
-            VALUES ('bot', $1, $2, $3, $4, $5)
+                (id, instance, host, pid, service, deployment,
+                 started_at, heartbeat_at)
+            VALUES ('bot', $1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (id) DO UPDATE SET
                 instance     = excluded.instance,
                 host         = excluded.host,
                 pid          = excluded.pid,
+                service      = excluded.service,
+                deployment   = excluded.deployment,
                 started_at   = excluded.started_at,
                 heartbeat_at = excluded.heartbeat_at
             WHERE instance_lock.instance = excluded.instance
-               OR instance_lock.heartbeat_at <= $6
+               OR instance_lock.heartbeat_at <= $8
+               OR (
+                    excluded.service IS NOT NULL
+                    AND (instance_lock.service IS NULL
+                         OR instance_lock.service = excluded.service)
+                  )
             RETURNING instance
             """
             ),
-            (instance, host, pid, now, now, stale_before),
+            (instance, host, pid, service, deployment, now, now, stale_before),
         )
         if owned:
             return None

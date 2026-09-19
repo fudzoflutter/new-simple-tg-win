@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS instance_lock (
     instance     TEXT NOT NULL,
     host         TEXT,
     pid          BIGINT,
+    service      TEXT,
+    deployment   TEXT,
     started_at   TEXT NOT NULL,
     heartbeat_at TEXT NOT NULL
 );
@@ -265,7 +267,13 @@ class Database:
     # -- instance lock (bir vaqtda faqat BITTA nusxa polling qiladi) --------
 
     async def claim_instance_lock(
-        self, instance: str, host: str, pid: int, stale_seconds: float
+        self,
+        instance: str,
+        host: str,
+        pid: int,
+        stale_seconds: float,
+        service: Optional[str] = None,
+        deployment: Optional[str] = None,
     ) -> Optional[dict]:
         """Qulfni olishga urinadi.
 
@@ -273,7 +281,7 @@ class Database:
         hozirgi egasi haqidagi yozuv qaytadi (boshqa nusxa tirik).
         """
         return await self._backend.claim_instance_lock(
-            instance, host, pid, stale_seconds
+            instance, host, pid, stale_seconds, service, deployment
         )
 
     async def heartbeat_instance_lock(self, instance: str) -> bool:
@@ -375,6 +383,14 @@ class PostgresDatabase:
             # Eski bazalar uchun migratsiya: xabar KIMdan kelganini saqlash.
             await conn.execute(
                 "ALTER TABLE events ADD COLUMN IF NOT EXISTS sender_id BIGINT"
+            )
+            # Migratsiya: deploy (Railway) identifikatorlari — yangi deploy
+            # eski deploy qulfini xavfsiz egallashi uchun (instance_lock.py).
+            await conn.execute(
+                "ALTER TABLE instance_lock ADD COLUMN IF NOT EXISTS service TEXT"
+            )
+            await conn.execute(
+                "ALTER TABLE instance_lock ADD COLUMN IF NOT EXISTS deployment TEXT"
             )
         await self._import_sqlite_once()
         logger.info("Supabase Postgres ready (%s)", settings.supabase_host)
@@ -533,14 +549,28 @@ class PostgresDatabase:
     # ======================================================================
 
     async def claim_instance_lock(
-        self, instance: str, host: str, pid: int, stale_seconds: float
+        self,
+        instance: str,
+        host: str,
+        pid: int,
+        stale_seconds: float,
+        service: Optional[str] = None,
+        deployment: Optional[str] = None,
     ) -> Optional[dict]:
         """Qulfni ATOMIK olish (yoki mavjud egasini qaytarish).
 
         Bir SQL bayonotda: yozuv yo'q bo'lsa yaratamiz, mavjud bo'lsa
-        FAQAT egasi o'zimiz bo'lsak yoki heartbeat ``stale_seconds`` dan
-        eski bo'lsa (nusxa o'lgan) egallaymiz.  Shuning uchun ikki nusxa
-        bir vaqtda ishga tushsa ham faqat bittasi qulfni oladi.
+        FAQAT quyidagi hollarda egallaymiz:
+
+        * egasi o'zimiz bo'lsak;
+        * heartbeat ``stale_seconds`` dan eski bo'lsa (nusxa o'lgan);
+        * joriy nusxa BOSHQARILADIGAN deploy (``service`` berilgan) bo'lsa
+          va qulfdagi yozuv ham shu servis (yoki servissiz eski yozuv)
+          bo'lsa — platforma eski nusxani almashtiradi, shuning uchun
+          uning hali "yangi" heartbeat'i startni to'xtatmasligi kerak.
+          Bu holatda eski nusxa o'z heartbeat'ida qulfni yo'qotib,
+          pollingni to'xtatadi — ikki nusxa birga qolmaydi.
+          Boshqa servis (``service`` boshqacha) qulfini tortib OLMAYMIZ.
         """
         now = _now()
         stale_before = (
@@ -549,21 +579,31 @@ class PostgresDatabase:
         owned = await self._fetchval(
             """
             INSERT INTO instance_lock
-                (id, instance, host, pid, started_at, heartbeat_at)
-            VALUES ('bot', $1, $2, $3, $4, $4)
+                (id, instance, host, pid, service, deployment,
+                 started_at, heartbeat_at)
+            VALUES ('bot', $1, $2, $3, $4, $5, $6, $6)
             ON CONFLICT (id) DO UPDATE SET
                 instance     = EXCLUDED.instance,
                 host         = EXCLUDED.host,
                 pid          = EXCLUDED.pid,
+                service      = EXCLUDED.service,
+                deployment   = EXCLUDED.deployment,
                 started_at   = EXCLUDED.started_at,
                 heartbeat_at = EXCLUDED.heartbeat_at
             WHERE instance_lock.instance = EXCLUDED.instance
-               OR instance_lock.heartbeat_at <= $5
+               OR instance_lock.heartbeat_at <= $7
+               OR (
+                    EXCLUDED.service IS NOT NULL
+                    AND (instance_lock.service IS NULL
+                         OR instance_lock.service = EXCLUDED.service)
+                  )
             RETURNING instance
             """,
             instance,
             host,
             pid,
+            service,
+            deployment,
             now,
             stale_before,
         )

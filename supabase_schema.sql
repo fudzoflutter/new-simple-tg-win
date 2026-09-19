@@ -63,11 +63,16 @@ CREATE TABLE IF NOT EXISTS access (
 );
 
 -- Bir vaqtda faqat BITTA nusxa polling qilishi uchun qulf (heartbeat).
+-- service/deployment: Railway (RAILWAY_SERVICE_ID / RAILWAY_DEPLOYMENT_ID)
+-- qiymatlari — SHU SERVISning yangi deployi eski deploy qulfini xavfsiz
+-- egallashi uchun (app/services/instance_lock.py).
 CREATE TABLE IF NOT EXISTS instance_lock (
     id           TEXT PRIMARY KEY,
     instance     TEXT NOT NULL,
     host         TEXT,
     pid          BIGINT,
+    service      TEXT,
+    deployment   TEXT,
     started_at   TEXT NOT NULL,
     heartbeat_at TEXT NOT NULL
 );

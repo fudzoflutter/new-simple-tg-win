@@ -18,6 +18,10 @@ Testlar:
 PART A — instance_lock: qulf ATOMIK olinadi, ikkinchi nusxa to'xtatiladi,
          heartbeat ishlaydi, o'lgan nusxaning qulfi (stale) bo'shatiladi,
          chiqishda qulf bo'shaydi.
+PART A2 — shu kompyuterdagi o'lik nusxa kutishni talab qilmaydi.
+PART A3 — Railway (deploy): boshqariladigan nusxa SHU servisning eski
+         qulfini (yangi deploy / qayta ishga tushirish / replika) oladi;
+         boshqa servisning qulfiga tegilmaydi.
 PART B — FORCE_POLL=1 qulfni o'chiradi; xabar matni egasining ma'lumotini
          ko'rsatadi.
 PART C — ConflictWatcher: 60 sekundda 3 ta 409 -> bitta ogohlantirish;
@@ -169,6 +173,63 @@ async def part_a2_wait() -> None:
 
 
 # ---------------------------------------------------------------------------
+# PART A3 — yangi deploy eski deploy qulfini egallaydi (Railway)
+# ---------------------------------------------------------------------------
+async def part_a3_new_deploy_takes_over() -> None:
+    """Railway: boshqariladigan nusxa SHU servisning eski (tirik) qulfini oladi.
+
+    Platforma yangi versiyani chiqarganda (yoki konteynerni qayta ishga
+    tushirganda) eski nusxa bir necha sekund tirik turadi va uning
+    heartbeat'i hali "yangi" bo'ladi.  Ilgarigi mantiq yangi nusxani
+    "ikkinchi nusxa" deb to'xtatib, botni butunlay o'chirib qo'yardi.
+    Endi ``service`` bir xil bo'lsa, qulf boshqariladigan nusxaga o'tadi.
+    """
+    os.environ["RAILWAY_SERVICE_ID"] = "svc-1"
+    os.environ["RAILWAY_DEPLOYMENT_ID"] = "dep-old"
+    try:
+        # Eski nusxa qulfni ushlab turadi (heartbeat YANGI — hali o'lmagan).
+        await db.claim_instance_lock(
+            "eski-nusxa", "old-host", 1, 60, "svc-1", "dep-old"
+        )
+
+        # Yangi deploy (boshqa deployment id): qulfni oladi.
+        os.environ["RAILWAY_DEPLOYMENT_ID"] = "dep-new"
+        assert await instance_lock.acquire() is None, "yangi deploy qulfni olishi kerak"
+        mine = instance_lock.current_instance()
+        assert mine and await db.heartbeat_instance_lock(mine) is True
+        assert await db.heartbeat_instance_lock("eski-nusxa") is False, (
+            "eski nusxa endi qulf egasi emas"
+        )
+
+        # Qayta ishga tushirish / replika (BIR XIL deployment id): heartbeat
+        # yangi bo'lsa ham qulfni oladi — eski nusxa keyingi heartbeat'ida
+        # to'xtaydi.
+        holder = await db.claim_instance_lock(
+            "replika-2", "host-2", 2, 60, "svc-1", "dep-new"
+        )
+        assert holder is None, "shu servisning keyingi nusxasi qulfni olishi kerak"
+        assert await db.heartbeat_instance_lock(mine) is False, (
+            "eski replika endi qulf egasi emas"
+        )
+
+        # BOSHQA servis qulfni tortib olmaydi.
+        holder = await db.claim_instance_lock(
+            "boshqa-bot", "host-3", 3, 60, "svc-2", "dep-x"
+        )
+        assert holder is not None, "boshqa servis qulfni olmasligi kerak"
+        assert holder["instance"] == "replika-2", holder
+
+        # Keyingi testlar toza holatdan boshlansin.
+        await db.release_instance_lock("replika-2")
+        await instance_lock.release()
+    finally:
+        os.environ.pop("RAILWAY_SERVICE_ID", None)
+        os.environ.pop("RAILWAY_DEPLOYMENT_ID", None)
+
+    print("PART A3 (boshqariladigan deploy qulfni oladi) PASSED ✅")
+
+
+# ---------------------------------------------------------------------------
 # PART C — 409 Conflict kuzatuvchisi
 # ---------------------------------------------------------------------------
 async def part_c_watcher() -> None:
@@ -267,6 +328,7 @@ async def run_all() -> None:
     try:
         await part_a_lock()
         await part_a2_wait()
+        await part_a3_new_deploy_takes_over()
         await part_c_watcher()
         await part_d_install()
     finally:
