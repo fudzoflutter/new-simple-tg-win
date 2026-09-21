@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 #
 # Bot akkountiga Fragment kolleksiyoni olganingizdan keyin True qiling.
 # ---------------------------------------------------------------------------
-ENABLE_PREMIUM_EMOJI_TAGS = False
+ENABLE_PREMIUM_EMOJI_TAGS = True
 
 
 def tg_e(emoji_id: str | None, fallback: str) -> str:
@@ -85,30 +85,30 @@ class EmojiConfig:
     inbox: EmojiEntry = field(default_factory=lambda: EmojiEntry("5472239203590888751", "📥"))
     info: EmojiEntry = field(default_factory=lambda: EmojiEntry("5368324170671202286", "ℹ️"))
     connect_title: EmojiEntry = field(default_factory=lambda: EmojiEntry("5333163668629442693", "🔗"))
-    online_dot: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "🟢"))
-    offline_dot: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "🔴"))
-    paused_dot: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "🟡"))
-    users: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "👥"))
+    online_dot: EmojiEntry = field(default_factory=lambda: EmojiEntry("5215522595922779944", "🟢"))
+    offline_dot: EmojiEntry = field(default_factory=lambda: EmojiEntry("5411225014148014586", "🔴"))
+    paused_dot: EmojiEntry = field(default_factory=lambda: EmojiEntry("6271271702408204490", "🟡"))
+    users: EmojiEntry = field(default_factory=lambda: EmojiEntry("6001526766714227911", "👥"))
 
     # ------------------------------------------------------------------
     # HISOBOTLAR (tahrirlandi / o'chirildi)
     # ------------------------------------------------------------------
     report_edit: EmojiEntry = field(default_factory=lambda: EmojiEntry("5395444784611480792", "✏️"))
     report_delete: EmojiEntry = field(default_factory=lambda: EmojiEntry("5445267414562389170", "🗑"))
-    report_user: EmojiEntry = field(default_factory=lambda: EmojiEntry("6145672251489391716", "👤"))
-    report_id: EmojiEntry = field(default_factory=lambda: EmojiEntry("5837071798935492251", "🆔"))
-    report_text: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "📝"))
-    report_old: EmojiEntry = field(default_factory=lambda: EmojiEntry("5879841310902324730", "📱"))
-    report_new: EmojiEntry = field(default_factory=lambda: EmojiEntry("5467523423989144592", "📲"))
-    report_chat: EmojiEntry = field(default_factory=lambda: EmojiEntry("5443038326535759644", "💬"))
-    report_clock: EmojiEntry = field(default_factory=lambda: EmojiEntry("5787488119490088755", "🕒"))
+    report_user: EmojiEntry = field(default_factory=lambda: EmojiEntry("5818715087237549366", "👤"))
+    report_id: EmojiEntry = field(default_factory=lambda: EmojiEntry("5974526806995242353", "🆔"))
+    report_text: EmojiEntry = field(default_factory=lambda: EmojiEntry("5334882760735598374", "📝"))
+    report_old: EmojiEntry = field(default_factory=lambda: EmojiEntry("5269609320944772058", "📱"))
+    report_new: EmojiEntry = field(default_factory=lambda: EmojiEntry("6046412391887935443", "📲"))
+    report_chat: EmojiEntry = field(default_factory=lambda: EmojiEntry("5240369183593615679", "💬"))
+    report_clock: EmojiEntry = field(default_factory=lambda: EmojiEntry("6323361327767099558", "🕒"))
     # Diagnostika: o'chirilgan xabar keshda umuman topilmadi (hisobot chiqmaydi).
-    report_missed: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "⚠️"))
+    report_missed: EmojiEntry = field(default_factory=lambda: EmojiEntry("5420323339723881652", "⚠️"))
 
     # ------------------------------------------------------------------
     # HOLAT BELGILARI (oddiy emoji — semantik)
     # ------------------------------------------------------------------
-    ok: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "✅"))
+    ok: EmojiEntry = field(default_factory=lambda: EmojiEntry("5355278615531495452", "✅"))
 
     # ------------------------------------------------------------------
     # KIRISH NAZORATI: ruxsat / rad / ban (app/handlers/admin.py,
@@ -126,15 +126,15 @@ class EmojiConfig:
     #   access_admin    👑  ro'yxatdagi admin belgisi
     #   page_prev/next  ⬅️ ➡️  ro'yxatni sahifalash
     # ------------------------------------------------------------------
-    access_request: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "🔔"))
-    access_pending: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "⏳"))
-    access_denied: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "🔒"))
-    access_banned: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "🚫"))
-    access_allowed: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "✅"))
-    access_rejected: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "❌"))
-    access_admin: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "👑"))
-    page_prev: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "⬅️"))
-    page_next: EmojiEntry = field(default_factory=lambda: EmojiEntry("", "➡️"))
+    access_request: EmojiEntry = field(default_factory=lambda: EmojiEntry("5458603043203327669", "🔔"))
+    access_pending: EmojiEntry = field(default_factory=lambda: EmojiEntry("5325583469344989152", "⏳"))
+    access_denied: EmojiEntry = field(default_factory=lambda: EmojiEntry("5240148791641787029", "🔒"))
+    access_banned: EmojiEntry = field(default_factory=lambda: EmojiEntry("5240241223632954241", "🚫"))
+    access_allowed: EmojiEntry = field(default_factory=lambda: EmojiEntry("5260463209562776385", "✅"))
+    access_rejected: EmojiEntry = field(default_factory=lambda: EmojiEntry("5210952531676504517", "❌"))
+    access_admin: EmojiEntry = field(default_factory=lambda: EmojiEntry("5433758796289685818", "👑"))
+    page_prev: EmojiEntry = field(default_factory=lambda: EmojiEntry("5976535107933050770", "⬅️"))
+    page_next: EmojiEntry = field(default_factory=lambda: EmojiEntry("5435955998479102657", "➡️"))
 
     # ------------------------------------------------------------------
     # QULAYLIK: qisqa nomlar (texts.py ishlatadigan E_STATS, E_USER, ...)
