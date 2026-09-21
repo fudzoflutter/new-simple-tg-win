@@ -84,11 +84,11 @@ class EmojiConfig:
     stats_header: EmojiEntry = field(default_factory=lambda: EmojiEntry("5368324170671202286", "📊"))
     inbox: EmojiEntry = field(default_factory=lambda: EmojiEntry("5472239203590888751", "📥"))
     info: EmojiEntry = field(default_factory=lambda: EmojiEntry("5368324170671202286", "ℹ️"))
-    connect_title: EmojiEntry = field(default_factory=lambda: EmojiEntry("5333163668629442693", "🔗"))
+    connect_title: EmojiEntry = field(default_factory=lambda: EmojiEntry("5271604874419647061", "🔗"))
     online_dot: EmojiEntry = field(default_factory=lambda: EmojiEntry("5215522595922779944", "🟢"))
     offline_dot: EmojiEntry = field(default_factory=lambda: EmojiEntry("5411225014148014586", "🔴"))
     paused_dot: EmojiEntry = field(default_factory=lambda: EmojiEntry("6271271702408204490", "🟡"))
-    users: EmojiEntry = field(default_factory=lambda: EmojiEntry("6001526766714227911", "👥"))
+    users: EmojiEntry = field(default_factory=lambda: EmojiEntry("5958460691550572213", "👥"))
 
     # ------------------------------------------------------------------
     # HISOBOTLAR (tahrirlandi / o'chirildi)
