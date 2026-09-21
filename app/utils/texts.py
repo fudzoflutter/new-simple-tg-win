@@ -41,10 +41,7 @@ WELCOME = (
     "Meni Telegram akkauntingizga ulang — suhbatdoshingiz yuborgan xabarlar "
     "tahrirlanganda yoki o'chirilganda darhol xabar beraman (matn, stiker, "
     "rasm, video, GIF, ovozli xabar va dumaloq video).\n\n"
-    "Shuningdek, istalgan havolani tozalab beraman va botdan nechta odam "
-    "foydalanayotganini ko'rsataman."
 )
-
 MENU_HINT = "Quyidagi amallardan birini tanlang 👇"
 
 # /start bosilganda, foydalanuvchi ALLAQACHON ulangan bo'lsa.
@@ -143,8 +140,10 @@ BUSINESS_DISABLED = (
 REPORT_EDIT = (
     f"{E_EDIT} <b>Xabar tahrirlandi</b>\n\n"
     f"{E_USER} Kim: {{who}}\n"
-    f"{EMOJI.report_old.tag} Default: {{old}}\n"
-    f"{EMOJI.report_new.tag} Edited: {{new}}"
+    f"{EMOJI.report_old.tag} <b>Default:</b>\n"
+    f"<blockquote>{{old}}</blockquote>\n"
+    f"{EMOJI.report_new.tag} <b>Edited:</b>\n"
+    f"<blockquote>{{new}}</blockquote>"
 )
 
 REPORT_DELETED_MEDIA = (
