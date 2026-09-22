@@ -52,7 +52,11 @@ def part1_offline() -> None:
         users="0", total="0", edits="0", deletes="0",
     ))
     texts.USERS_COUNT.format(total="1", online="1")
-    texts.LINK_TITLE
+
+    # Havola tozalovchi xizmat ishlaydi (kuzatuv parametri olib tashlanadi).
+    from app.services.linkcleaner import clean_url
+
+    assert clean_url("https://x.com/p?utm_source=a&id=1") == "https://x.com/p?id=1"
     print("PART 1 (offline) PASSED ✅")
 
 

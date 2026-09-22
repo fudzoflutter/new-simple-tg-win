@@ -124,6 +124,9 @@ class FakeBot:
 
     def __init__(self) -> None:
         self.sent: list[tuple[str, str]] = []  # (method, caption/text)
+        # SUHBAT (manzil): har bir yuborilgan xabar kimga ketgani.  Bu ro'yxat
+        # aynan maxfiylikni isbotlaydi — hisobot EGAGA ketishi, ADMINGA emas.
+        self.recipients: list[int] = []
         # Qayta yuborilgan fayllar: (method, file_id) — fayl AYNAN o'sha
         # keshlangan file_id bilan ketganini isbotlash uchun.
         self.files: list[tuple[str, str]] = []
@@ -149,15 +152,18 @@ class FakeBot:
         return io.BytesIO(b"BYTES:" + str(file).encode())
 
     async def send_message(self, chat_id: int, text: str, **kw: Any) -> None:
+        self.recipients.append(chat_id)
         self.sent.append(("message", text))
 
     async def send_photo(self, chat_id: int, photo: str, caption: str = "", **kw: Any) -> None:
+        self.recipients.append(chat_id)
         if self.fail_media:
             raise RuntimeError("media yuborilmadi (test)")
         self.sent.append(("photo", caption))
         self.files.append(("photo", photo))
 
     async def send_video(self, chat_id: int, video: Any, caption: str = "", **kw: Any) -> None:
+        self.recipients.append(chat_id)
         self._guard("send_video")
         self.sent.append(("video", caption))
         if isinstance(video, str):
@@ -166,30 +172,36 @@ class FakeBot:
             self.uploads.append(("video", video.data, video.filename))
 
     async def send_animation(self, chat_id: int, animation: str, caption: str = "", **kw: Any) -> None:
+        self.recipients.append(chat_id)
         self.sent.append(("animation", caption))
         self.files.append(("animation", animation))
 
     async def send_sticker(self, chat_id: int, sticker: str, **kw: Any) -> None:
+        self.recipients.append(chat_id)
         self.sent.append(("sticker", ""))
         self.files.append(("sticker", sticker))
 
     async def send_voice(self, chat_id: int, voice: str, caption: str = "", **kw: Any) -> None:
+        self.recipients.append(chat_id)
         self._guard("send_voice")
         self.sent.append(("voice", caption))
         self.files.append(("voice", voice))
 
     async def send_video_note(self, chat_id: int, video_note: str, **kw: Any) -> None:
+        self.recipients.append(chat_id)
         self._guard("send_video_note")
         # Dumaloq videoga caption yozib bo'lmaydi — izoh alohida xabar bo'ladi.
         self.sent.append(("video_note", ""))
         self.files.append(("video_note", video_note))
 
     async def send_audio(self, chat_id: int, audio: Any, caption: str = "", **kw: Any) -> None:
+        self.recipients.append(chat_id)
         self._guard("send_audio")
         self.sent.append(("audio", caption))
         self.uploads.append(("audio", audio.data, audio.filename))
 
     async def send_document(self, chat_id: int, document: Any, caption: str = "", **kw: Any) -> None:
+        self.recipients.append(chat_id)
         self._guard("send_document")
         self.sent.append(("document", caption))
         self.uploads.append(("document", document.data, document.filename))
@@ -294,8 +306,9 @@ async def run_all() -> None:
     assert len(msgs) == 1, f"exactly one edit report expected, got {len(msgs)}"
     report = msgs[0]
     assert "tahrirlandi" in report and "Okay, darling" in report
-    assert "📱 Default: Okay, darling" in report
-    assert "📲 Edited: Okay, darling!" in report
+    # Shablon endi <blockquote> ishlatadi (app/utils/texts.REPORT_EDIT).
+    assert "<b>Default:</b>" in report and "<blockquote>Okay, darling</blockquote>" in report
+    assert "<b>Edited:</b>" in report and "<blockquote>Okay, darling!</blockquote>" in report
     assert "@juratbek" in report, "Who must show the username"
     assert "Chat: <b>Partner</b>" in report and "Vaqt: <b>" in report
     row = await monkeypatch_db.get_event_by_message(CHAT_ID, 11)
@@ -567,7 +580,7 @@ async def run_all() -> None:
         await ri.report_incoming(FakeMessage(601, PARTNER_ID, text="o'chiriladi"))
         await ri.report_deleted(SimpleDeleted([601]))
         text_report = [t for k, t in ri.bot.sent if k == "message"][0]
-        assert "🕒 O'chirilgan: <b>17:34:56</b>" in text_report, text_report
+        assert "O'chirilgan: <b>17:34:56</b>" in text_report, text_report
         assert clock["calls"] == 1, (
             f"vaqt bir marta olinishi kerak, {clock['calls']} marta olingan"
         )
@@ -580,7 +593,7 @@ async def run_all() -> None:
         )
         await ri.report_deleted(SimpleDeleted([602]))
         caption = ri.bot.sent[0][1]
-        assert "🕒 O'chirilgan: <b>17:34:56</b>" in caption, caption
+        assert "O'chirilgan: <b>17:34:56</b>" in caption, caption
         assert "20:00:00" not in caption and "23:00:00" not in caption, caption
         assert clock["calls"] == 1, clock["calls"]
 
@@ -597,7 +610,7 @@ async def run_all() -> None:
         )
         await rf.report_deleted(SimpleDeleted([603]))
         body = [t for k, t in rf.bot.sent if k == "message"][0]
-        assert "🕒 O'chirilgan: <b>17:34:56</b>" in body, body
+        assert "O'chirilgan: <b>17:34:56</b>" in body, body
 
         # (d) Bir yangilamada bir nechta xabar — hammasi AYNI vaqtni ko'rsatadi.
         ri.bot.sent.clear()
@@ -607,7 +620,7 @@ async def run_all() -> None:
         await ri.report_deleted(SimpleDeleted([604, 605]))
         times = [t for k, t in ri.bot.sent if k == "message"]
         assert len(times) == 2, times
-        assert all("🕒 O'chirilgan: <b>17:34:56</b>" in t for t in times), times
+        assert all("O'chirilgan: <b>17:34:56</b>" in t for t in times), times
         assert clock["calls"] == 1, clock["calls"]
 
         # (e) TAHRIRLASH hisoboti ham shu mintaqada (UTC+5).
@@ -616,7 +629,7 @@ async def run_all() -> None:
         await ri.report_incoming(FakeMessage(606, PARTNER_ID, text="eski"))
         await ri.report_edited(FakeMessage(606, PARTNER_ID, text="yangi"))
         edit = [t for k, t in ri.bot.sent if k == "message"][0]
-        assert "🕒 Vaqt: <b>17:34:56</b>" in edit, edit
+        assert "Vaqt: <b>17:34:56</b>" in edit, edit
     finally:
         rep.now_report = real_now  # type: ignore[assignment]
 
@@ -758,7 +771,7 @@ async def run_all() -> None:
     assert "VOICE_MESSAGES_FORBIDDEN" in caption, caption
     assert "fayl sifatida yuborildi" in caption, caption
     assert "Ovozli xabarlar" in caption, caption  # qaysi sozlamani ochish kerak
-    assert "🕒 O'chirilgan: <b>" in caption, caption
+    assert "O'chirilgan: <b>" in caption, caption
     # Mazmun ketdi, shuning uchun "Xabar: <id>" kartasi YUBORILMAYDI.
     assert not any("Xabar:" in t for k, t in kb.sent if k == "message"), kb.sent
 
@@ -826,9 +839,62 @@ async def run_all() -> None:
     clear_instant_cache()
     print("Scenario K (ovoz/dumaloq video rad etilsa — fayl zaxirasi) OK ✅")
 
+    # Scenario L: KO'P FOYDALANUVCHI (300 ta ulanish) — HISOBOTLAR HECH QACHON
+    # ADMINGA KETMAYDI, har biri AYNAN o'z ulanishining egasiga boradi.
+    #
+    # Ilgari bu qoida TEST QILINMAGAN edi: FakeBot manzilni (chat_id) saqlab
+    # qo'ymasdi, shuning uchun hisobot adminga ketib qolsa ham barcha testlar
+    # o'tib ketardi.  Endi har bir yuborilgan xabarning manzili tekshiriladi.
+    ldb = FakeDB()
+    rep.db = ldb  # type: ignore[assignment]
+    invalidate_connection()
+    clear_instant_cache()
+
+    old_admin = rep.settings.admin_id
+    # ``settings`` — frozen dataclass, shuning uchun object.__setattr__.
+    object.__setattr__(rep.settings, "admin_id", 424242)  # ega ham, suhbatdosh ham EMAS
+    try:
+        lb = FakeBot()
+        rl = Reporter(lb)
+        sending = asyncio.create_task(
+            rl.report_incoming(FakeMessage(1001, PARTNER_ID, text="maxfiy so'z"))
+        )
+        await rl.report_edited(FakeMessage(1001, PARTNER_ID, text="maxfiy so'z!"))
+        await rl.report_deleted(SimpleDeleted([1001]))
+        await sending
+
+        assert lb.sent, "hisobot chiqishi kerak"
+        assert set(lb.recipients) == {OWNER_CHAT}, (
+            f"barcha hisobotlar FAQAT ega chatiga ({OWNER_CHAT}) ketishi kerak, "
+            f"lekin manzillar: {lb.recipients}"
+        )
+        assert rep.settings.admin_id not in lb.recipients, (
+            "hisobot admin chatiga ketdi — maxfiylik buzildi!"
+        )
+
+        # Ikkinchi (boshqa) ulanish — hisobot faqat O'SHA egaga boradi.
+        OWNER2_CHAT = 3000
+        ldb.connection_user_id = OWNER2_CHAT
+        ldb.connection_chat_id = OWNER2_CHAT
+        invalidate_connection("conn-1")
+        lb2 = FakeBot()
+        rl2 = Reporter(lb2)
+        await rl2.report_incoming(FakeMessage(2001, PARTNER_ID, text="ikkinchi ega"))
+        await rl2.report_deleted(SimpleDeleted([2001]))
+        assert set(lb2.recipients) == {OWNER2_CHAT}, (
+            f"hisobot faqat o'z egasiga ({OWNER2_CHAT}) ketishi kerak: "
+            f"{lb2.recipients}"
+        )
+        assert OWNER_CHAT not in lb2.recipients, "hisobot boshqa egaga ketdi!"
+    finally:
+        object.__setattr__(rep.settings, "admin_id", old_admin)
+
+    clear_instant_cache()
+    print("Scenario L (ko'p foydalanuvchi — hisobot faqat egaga, adminga EMAS) OK ✅")
+
     print("REPORTER RULES TEST PASSED ✅  "
           "(silent sends, edit/delete-only reports, partner-only, usernames, "
-          "connection cache)")
+          "connection cache, owner-only delivery)")
 
 
 class SimplePhoto:

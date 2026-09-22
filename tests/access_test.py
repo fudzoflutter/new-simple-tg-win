@@ -176,7 +176,10 @@ async def part_a_cache() -> None:
         # Rad etish ham saqlanadi.
         await access.set_status(90002, access.DENIED, decided_by=ADMIN)
         assert not access.can_use(90002)
-        assert access.badge(90002) == "❌"
+        # Badge — emoji registrydagi juftlik belgisi (premium tag bo'lishi mumkin).
+        from app.emoji_config import EMOJI
+
+        assert access.badge(90002) == EMOJI.access_rejected.tag
         print("PART A (cache) PASSED ✅")
     finally:
         await _close_db()
@@ -289,7 +292,9 @@ async def part_c_ban_unban() -> None:
         uid = 90013
         await access.set_status(uid, access.BANNED, decided_by=ADMIN)
         assert not access.can_use(uid)
-        assert access.badge(uid) == "🚫"
+        from app.emoji_config import EMOJI
+
+        assert access.badge(uid) == EMOJI.access_banned.tag
 
         rows = {int(r["user_id"]): r for r in await db.access_rows()}
         assert rows[uid]["status"] == access.BANNED
@@ -456,7 +461,9 @@ def part_f_open_mode() -> None:
     object.__setattr__(settings, "test_mode", False)
     try:
         assert access.can_use(stranger), "ochiq rejimda hamma kiradi"
-        assert access.badge(stranger) == "✅"
+        from app.emoji_config import EMOJI
+
+        assert access.badge(stranger) == EMOJI.access_allowed.tag
     finally:
         object.__setattr__(settings, "test_mode", True)
     print("PART F (open mode) PASSED ✅")
@@ -946,8 +953,8 @@ def part_l_emoji_registry() -> None:
     assert EMOJI.access_allowed.fallback in texts.USERS_PANEL_LEGEND
     assert EMOJI.access_pending.fallback in texts.USERS_PANEL_LEGEND
     assert EMOJI.access_banned.fallback in texts.USERS_PANEL_LEGEND
-    assert texts.ACCESS_REQUEST_ALLOWED.startswith(EMOJI.access_allowed.fallback)
-    assert texts.ACCESS_REQUEST_DENIED.startswith(EMOJI.access_rejected.fallback)
+    assert texts.ACCESS_REQUEST_ALLOWED.startswith(EMOJI.access_allowed.tag)
+    assert texts.ACCESS_REQUEST_DENIED.startswith(EMOJI.access_rejected.tag)
     # Ro'yxat sarlavhasi ham registrydan (👥 / 🟢).
     assert EMOJI.users.fallback in texts.USERS_PANEL_TITLE
     assert EMOJI.online_dot.fallback in texts.USERS_PANEL_TITLE
@@ -976,17 +983,21 @@ def part_l_emoji_registry() -> None:
         object.__setattr__(EMOJI, "access_allowed", saved_allowed)
         object.__setattr__(EMOJI, "access_banned", saved_banned)
 
-    # 5) Xabar ICHIDAGI premium emoji: kalit yoqilganda <tg-emoji> chiqadi.
-    assert EmojiEntry("123", "✅").tag == "✅"  # kalit o'chiq (hozirgi holat)
+    # 5) Xabar ICHIDAGI premium emoji: kalit yoqilganda <tg-emoji> chiqadi,
+    #    o'chirilganda esa oddiy emoji qoladi (ikkala holat sinab ko'riladi —
+    #    kalitning hozirgi qiymatiga BOG'LIQ EMAS).
     saved_flag = ec.ENABLE_PREMIUM_EMOJI_TAGS
-    ec.ENABLE_PREMIUM_EMOJI_TAGS = True
     try:
+        ec.ENABLE_PREMIUM_EMOJI_TAGS = True
         assert EmojiEntry("123", "✅").tag == '<tg-emoji emoji-id="123">✅</tg-emoji>'
         assert EmojiEntry("", "✅").tag == "✅", "ID bo'sh bo'lsa oddiy emoji qoladi"
         # Alert matni uchun: teglar olib tashlanadi (HTML o'qilmaydi).
         from app.utils.formatting import strip_html
 
         assert strip_html(EmojiEntry("123", "🚫").tag) == "🚫"
+
+        ec.ENABLE_PREMIUM_EMOJI_TAGS = False
+        assert EmojiEntry("123", "✅").tag == "✅", "kalit o'chiq — oddiy emoji"
     finally:
         ec.ENABLE_PREMIUM_EMOJI_TAGS = saved_flag
     print("PART L (emoji registry) PASSED ✅")
@@ -1014,7 +1025,12 @@ async def part_m_stats_without_long_text() -> None:
         assert "Sizning statistikangiz" in text
         assert "Tahrirlar" in text and "O'chirishlar" in text
         assert "Bot qanday ishlaydi" not in text, "uzun izoh olib tashlanishi kerak"
-        assert len(text) < 600, f"ekran juda uzun: {len(text)} belgi"
+        # Uzunlik KO'RINADIGAN matn bo'yicha o'lchanadi: premium emoji teglari
+        # (<tg-emoji ...>) ekranga sig'adigan matnni o'zgartirmaydi.
+        from app.utils.formatting import strip_html
+
+        visible = strip_html(text)
+        assert len(visible) < 600, f"ekran juda uzun: {len(visible)} belgi"
         assert not hasattr(texts, "HOW_IT_WORKS"), "ishlatilmaydigan matn qolmasin"
         print("PART M (statistics without the long text) PASSED ✅")
     finally:
